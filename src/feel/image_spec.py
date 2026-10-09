@@ -1,6 +1,13 @@
 """图片 → 旋钮（情绪 / 速度 / 密度 / 亮度 / 是否抢口播）→ 交给 spec.build_spec。
 
-不用机器学习，只用 Pillow 量几个直观的画面特征，再按固定规则映射到 0..100 的旋钮
+两条路：
+  ① 视觉解读（默认，主路径）：src/feel/vision.py 让看图大模型从六个角度读图（情绪氛围 / 画面内容 /
+     给人的感觉 / 可能的故事·场景 / 节奏暗示 / 色调与光影情绪）并给出 energy / brightness / density /
+     调性 / BPM / 是否让位口播 → fuse_vision() 融合成旋钮；各角度文字里的情绪词再轻推一下（≤ ±10）；
+     下面的 Pillow 颜色特征只做 ±10 的轻微修正。整份解读写进 ArrangementSpec.image_reading。
+  ② 颜色规则（--no-vision / 没配 API Key / 视觉模型失败时自动兜底）：
+
+只用 Pillow 量几个直观的画面特征，再按固定规则映射到 0..100 的旋钮
 （和 spec.DEFAULT_KNOBS / build_spec 完全兼容），所以结果可解释、可复现、可以继续手动微调：
 
   主色相 (dominant hue)   暖色(红橙黄) → 情绪更亮、亮度更高；冷色(青蓝) → 情绪更暗、亮度略低；
@@ -10,7 +17,8 @@
   色彩方差 (color var.)   颜色越丰富、对比越强 → 「能量」越高 → 速度更快、密度略高；
                           能量很高的画面 → 偏配乐（不 duck）；很安静的画面 → 不抢口播（多让位）。
 
-  python -m src.feel.image_spec some.jpg      # 打印特征 + 旋钮 + 感觉描述（调试用）
+  python -m src.feel.image_spec some.jpg              # 视觉解读 + 颜色修正 → 旋钮（无 key 时自动退回颜色规则）
+  python -m src.feel.image_spec --no-vision some.jpg  # 只用颜色规则（离线）
 """
 from __future__ import annotations
 
@@ -21,7 +29,13 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from .spec import DEFAULT_KNOBS, VOICE_LABELS, clamp
+from .spec import DEFAULT_KNOBS, KEYWORDS, VOICE_LABELS, clamp
+
+COLOR_BIAS_MAX = 10         # Pillow colour features may move a vision knob by at most ±10
+COLOR_BIAS_GAIN = 0.35      # … proportional to (colour-rule knob − vision knob)
+ANGLE_NUDGE_MAX = 10        # emotion words inside the angle texts may move a knob by at most ±10
+ANGLE_NUDGE_GAIN = 0.3      # spec.KEYWORDS deltas (±25) × 0.3 ≈ ±7 per hit
+FEEL_MAX_CHARS = 100        # keep the feel line < 120 chars (spec.script_seconds treats long text as a 口播稿)
 
 ANALYZE_SIZE = 256          # longest side used for analysis (fast, stable across resolutions)
 THUMB_SIZE = 320            # longest side of the preview thumbnail returned to the UI
@@ -69,6 +83,11 @@ class ImageSuggestion:
     feel: str
     reasons: list[str]
     features: ImageFeatures
+    source: str = "color"                 # "vision" (看图模型解读 + 颜色修正) / "color" (纯颜色规则)
+    vision: dict | None = None            # VisionResult.to_dict() when source == "vision"
+    vision_error: str | None = None       # why we fell back (no key / timeout / bad JSON …); None if not tried
+    color_knobs: dict | None = None       # what the colour rules alone would have said
+    image_reading: dict | None = None     # → build_spec(image_reading=…) / ArrangementSpec.image_reading
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -219,11 +238,117 @@ def features_to_knobs(f: ImageFeatures) -> tuple[dict, bool, str, list[str]]:
     return knobs, duck, feel, reasons
 
 
-def suggest_from_image(src) -> ImageSuggestion:
+def _angle_nudges(angles: list[dict]) -> tuple[dict, list[str]]:
+    """Emotion words found in each angle's text/keywords (spec.KEYWORDS) → small knob nudges.
+    The 节奏暗示 angle counts double for speed/density. voice is left to suggested_duck."""
+    tot = {"mood": 0.0, "speed": 0.0, "density": 0.0, "brightness": 0.0}
+    why: list[str] = []
+    for a in angles:
+        blob = (a["text"] + " " + " ".join(a["keywords"])).lower()
+        for words, delta, label in KEYWORDS:
+            hits = [w for w in words if w.lower() in blob]
+            if not hits:
+                continue
+            moved = []
+            for k, d in delta.items():
+                if k not in tot:
+                    continue
+                w = ANGLE_NUDGE_GAIN * (2 if a["key"] == "rhythm" and k in ("speed", "density") else 1)
+                tot[k] += d * w
+                moved.append(k)
+            if moved:
+                why.append(f"{a['title']}「{hits[0]}」→ {label}")
+    tot = {k: clamp(v, -ANGLE_NUDGE_MAX, ANGLE_NUDGE_MAX) for k, v in tot.items()}
+    return tot, why
+
+
+def fuse_vision(vr, color_knobs: dict, f: ImageFeatures) -> tuple[dict, bool, str, list[str], dict]:
+    """Vision interpretation (primary) + angle word nudges + colour features (mild ±10 bias) → knobs.
+
+    mood       ← 情绪明亮度 brightness, held on the side of the suggested key (Dm < 67 ≤ F, see build_spec)
+    speed      ← suggested_bpm (70%) + energy (30%)
+    density    ← density (75%) + energy (25%)
+    brightness ← brightness (60%) + key colour (F +10 / Dm −5) + energy (20%)
+    voice      ← suggested_duck (0 不抢 / 1 平衡 / 2 偏配乐)
+    """
+    reasons: list[str] = [f"看图模型（{vr.provider}/{vr.model}{'，缓存' if vr.cached else ''}）从 {len(vr.angles)} 个角度读图，"
+                          "以下旋钮以它为主，颜色只做 ±10 修正："]
+    bpm_speed = (vr.suggested_bpm - 72) / 60 * 100
+    base = {
+        "mood": float(vr.brightness),
+        "speed": 0.7 * bpm_speed + 0.3 * vr.energy,
+        "density": 0.75 * vr.density + 0.25 * vr.energy,
+        "brightness": 0.6 * vr.brightness + 0.2 * vr.energy + 20 + (10 if vr.suggested_key == "F" else -5),
+    }
+    key_word = "F 大调（明亮温暖）" if vr.suggested_key == "F" else "D 小调（沉静/悬疑）"
+    reasons.append(f"情绪明亮度 {vr.brightness}、建议 {key_word} → 情绪 {base['mood']:.0f}")
+    reasons.append(f"能量 {vr.energy}、建议 {vr.suggested_bpm} BPM → 速度 {base['speed']:.0f}")
+    reasons.append(f"画面信息量 {vr.density} → 密度 {base['density']:.0f}")
+
+    nudge, why = _angle_nudges(vr.angles)
+    for k, v in nudge.items():
+        base[k] += v
+    if why:
+        reasons.append("各角度的情绪词微调：" + "；".join(why[:5]) + " → "
+                       + "、".join(f"{n} {nudge[k]:+.0f}" for k, n in
+                                  (("mood", "情绪"), ("speed", "速度"), ("density", "密度"), ("brightness", "亮度"))
+                                  if abs(nudge[k]) >= 0.5))
+
+    bias = {k: clamp(COLOR_BIAS_GAIN * (color_knobs[k] - base[k]), -COLOR_BIAS_MAX, COLOR_BIAS_MAX) for k in base}
+    for k in base:
+        base[k] += bias[k]
+    reasons.append(f"颜色修正（{f.hue_word}色调、亮度 {f.luminance:.0%}、细节 {f.edge_density:.0%}）："
+                   + "、".join(f"{n} {bias[k]:+.0f}" for k, n in
+                              (("mood", "情绪"), ("speed", "速度"), ("density", "密度"), ("brightness", "亮度"))))
+
+    mood = base["mood"]
+    mood = max(mood, 68) if vr.suggested_key == "F" else min(mood, 64)        # keep build_spec on the suggested key
+    voice = int(vr.suggested_duck)
+    knobs = {"mood": int(round(clamp(mood, 0, 100))), "speed": int(round(clamp(base["speed"], 0, 100))),
+             "density": int(round(clamp(base["density"], 0, 100))),
+             "brightness": int(round(clamp(base["brightness"], 0, 100))), "voice": voice}
+    duck = voice < 2
+    reasons.append(f"模型建议 → {VOICE_LABELS[voice]}（{'给人声让位 duck' if duck else '不 duck，音乐更突出'}）")
+
+    head = vr.content_zh or vr.mood_zh
+    tail = "、".join(vr.all_keywords()[:4])
+    feel = f"图片配乐：{head}"
+    if vr.mood_zh and vr.mood_zh != head:
+        feel += f"；{vr.mood_zh}"
+    if len(feel) > FEEL_MAX_CHARS - len(tail) - 4:
+        feel = feel[:FEEL_MAX_CHARS - len(tail) - 5] + "…"
+    if tail:
+        feel += f"（{tail}）"
+    reading = {"source": "vision", "provider": vr.provider, "model": vr.model, "angles": vr.angles,
+               "keywords": vr.all_keywords()[:8], "suggested_key": vr.suggested_key,
+               "suggested_bpm": vr.suggested_bpm, "suggested_duck": vr.suggested_duck,
+               "energy": vr.energy, "brightness": vr.brightness, "density": vr.density,
+               "narration_hint": vr.narration_hint, "color_bias": {k: round(v, 1) for k, v in bias.items()},
+               "angle_nudge": {k: round(v, 1) for k, v in nudge.items()}}
+    return knobs, duck, feel, reasons, reading
+
+
+def suggest_from_image(src, use_vision: bool = True, timeout: float | None = None) -> ImageSuggestion:
+    """use_vision=True: 看图模型解读为主（失败自动退回颜色规则，原因写在 vision_error）；False: 只用颜色规则。"""
+    if isinstance(src, (str, Path)):
+        src = Path(src).read_bytes()
     f = extract_features(src)
     knobs, duck, feel, reasons = features_to_knobs(f)
     assert set(knobs) == set(DEFAULT_KNOBS)
-    return ImageSuggestion(knobs=knobs, duck=duck, feel=feel, reasons=reasons, features=f)
+    color = ImageSuggestion(knobs=knobs, duck=duck, feel=feel, reasons=reasons, features=f, color_knobs=dict(knobs))
+    if not use_vision:
+        return color
+    from .vision import VisionError, interpret_image
+    try:
+        vr = interpret_image(src, timeout=timeout) if isinstance(src, (bytes, bytearray)) else None
+        if vr is None:
+            raise VisionError("视觉解读需要原始图片文件")
+    except VisionError as e:
+        color.vision_error = str(e)
+        return color
+    vk, vduck, vfeel, vreasons, reading = fuse_vision(vr, knobs, f)
+    return ImageSuggestion(knobs=vk, duck=vduck, feel=vfeel, reasons=vreasons, features=f, source="vision",
+                           vision=vr.to_dict(), vision_error=None, color_knobs=dict(knobs), image_reading=reading)
 
 
 def thumbnail_data_url(src, size: int = THUMB_SIZE) -> str:
@@ -238,11 +363,15 @@ def thumbnail_data_url(src, size: int = THUMB_SIZE) -> str:
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    use_vision = "--no-vision" not in argv
+    argv = [a for a in argv if a != "--no-vision"]
     if not argv:
-        print("usage: python -m src.feel.image_spec IMAGE [IMAGE...]", file=sys.stderr)
+        print("usage: python -m src.feel.image_spec [--no-vision] IMAGE [IMAGE...]", file=sys.stderr)
         return 2
     for p in argv:
-        s = suggest_from_image(p)
+        s = suggest_from_image(p, use_vision=use_vision)
+        if s.vision_error:
+            print(f"[image] 视觉解读未启用：{s.vision_error}", file=sys.stderr)
         print(json.dumps({"image": p, **s.to_dict()}, ensure_ascii=False, indent=2))
     return 0
 

@@ -227,12 +227,55 @@ uv run musician serve --host 0.0.0.0    # 局域网里其他电脑也能打开
 
 ### 从图片生成（图片 → 音乐）
 
-不想写字？点「**上传图片**」（或把图片拖进那张卡片）：封面、截图、产品照片都行。页面会显示缩略图和主色板，
-自动摆好旋钮、在「感觉」框里写一句画面描述，并列出每条规则的理由；勾选「上传后自动生成试听」时顺便渲 20 秒试听。
-之后**照常拖旋钮** → 「微调后再渲」（只重渲变化的声部），或「生成试听」（图片模式下保留旋钮，不会被文字覆盖；
-在感觉框里重新打字或点示例就回到文字模式）→ 满意了「导出完整轨」。
+不想写字？点「**上传图片**」（或把图片拖进那张卡片）：封面、截图、产品照片都行。
 
-不用机器学习：`src/feel/image_spec.py` 用 Pillow 把图缩到 256 px，量 4 个直观特征，按固定规则换算成和
+**默认先「读懂」整张图（视觉解读）**：`src/feel/vision.py` 把图片（缩到 1024 px 的 JPEG）发给支持看图的大模型，
+要求它像配乐总监一样从**六个角度**读图，每个角度一句具体的中文 + 2~4 个关键词，并给出音乐建议（结构化 JSON）：
+
+| 角度 | 说明 | 主要影响 |
+|---|---|---|
+| 情绪氛围 | 画面的情绪基调 | 调性（D 小调 / F 大调）、情绪旋钮 |
+| 画面内容 | 画面里有什么、在发生什么 | 「感觉」框里的描述；是否需要主旋律讲故事 |
+| 给人的感觉 | 观众看到后的内心感受 | 情绪 / 速度微调、是否抢口播 |
+| 可能的故事 / 场景 | 这一刻前后可能发生什么、适合什么视频 | 编曲说明、配器取舍 |
+| 节奏暗示 | 静止还是流动、舒缓还是紧凑 | 速度（BPM）、密度（这一角度的情绪词权重加倍） |
+| 色调与光影情绪 | 冷暖、明暗、对比、光线的情绪 | 亮度（音色明暗）、情绪 |
+
+另外还有数值建议：`energy` / `brightness` / `density`（0–100）、`suggested_key`（Dm/F）、`suggested_bpm`（72–132）、
+`suggested_duck`（0 不抢 / 1 平衡 / 2 偏配乐）、`narration_hint`（口播语气建议）、综合 `keywords`。
+
+**融合规则**（`image_spec.fuse_vision`，视觉为主、颜色为辅）：
+情绪 ← 情绪明亮度（并保证落在建议调性那一侧）；速度 ← 建议 BPM 70% + 能量 30%；密度 ← 信息量 75% + 能量 25%；
+亮度 ← 明亮度 + 调性 + 能量；是否抢口播 ← suggested_duck。各角度文字里的情绪词（与文字模式同一张词表）再轻推 ≤ ±10；
+最后用下面的 Pillow 颜色特征做**最多 ±10** 的轻微修正。六个角度的解读整份写进编曲规格 `image_reading`，
+试听下方的说明会逐条写出「读图·节奏暗示『…』→ 82 BPM」这样的对应关系。
+
+**网页上看到的**：上传后，旋钮上方出现「**这张图在说什么**」卡片——六个角度各一格（情绪氛围 / 画面内容 / 给人的感觉
+高亮显示）、每格带关键词、底部是综合关键词和口播建议，右上角注明所用模型（以及是否命中缓存）。
+「使用视觉解读」复选框默认勾选；取消勾选 = 只用颜色规则（离线、即时）。没配 API Key、超时或模型返回不可解析时，
+会**自动改用颜色规则**，卡片里用橙色提示写明原因（例如「未配置视觉模型 API Key …」），页面加载时也会提前提示。
+之后**照常拖旋钮** → 「微调后再渲」（只重渲变化的声部，读图结果会一起带上），或「生成试听」（图片模式下保留旋钮，
+不会被文字覆盖；在感觉框里重新打字或点示例就回到文字模式）→ 满意了「导出完整轨」。
+
+**配置 API Key**（任选一种，设置后重启 `musician serve`）：
+
+```bash
+export OPENAI_API_KEY=sk-...                     # OpenAI（默认依次尝试 gpt-4o-mini → gpt-4.1-mini → gpt-4o → gpt-4.1）
+# 或任何 OpenAI 兼容接口（OpenRouter / 通义千问 / 智谱 / 本地 vLLM …）：
+export OPENAI_API_KEY=...  OPENAI_BASE_URL=https://openrouter.ai/api/v1  CTM_VISION_MODEL=qwen/qwen2.5-vl-72b-instruct
+# 或 Anthropic Claude（默认依次尝试 claude-sonnet-4-5 → claude-haiku-4-5 → claude-3-5-sonnet-latest …）：
+export ANTHROPIC_API_KEY=sk-ant-...
+# 可选：CTM_VISION_MODEL=模型1,模型2（按顺序尝试）  CTM_VISION_PROVIDER=openai|anthropic（两个 key 都有时指定）
+#       CTM_VISION_TIMEOUT=45（秒）  CTM_VISION_CACHE=build/vision_cache（缓存目录）
+uv run musician serve
+```
+
+- 模型不存在（404）/ 限流 / 5xx 时自动换下一个候选模型；Key 无效（401/403）或超时则直接退回颜色规则并说明原因。
+- **缓存**：按图片内容 SHA-256（+ 提示词版本）缓存在 `build/vision_cache/`，同一张图再次上传不再调用模型、不再计费。
+- 不新增依赖：只用 Python 标准库 `urllib` 调接口。
+
+**颜色规则（兜底 / ±10 修正）**：
+`src/feel/image_spec.py` 不用机器学习，用 Pillow 把图缩到 256 px，量 4 个直观特征，按固定规则换算成和
 `src/feel/spec.py` 完全一样的旋钮（0–100，是否抢口播 0/1/2），所以结果可解释、可复现：
 
 | 画面特征 | 怎么量 | 影响的旋钮 |
@@ -249,13 +292,20 @@ uv run musician serve --host 0.0.0.0    # 局域网里其他电脑也能打开
 灰图 → 中性、慢、极疏、不抢。
 
 ```bash
-uv run python -m src.feel.image_spec 封面.jpg       # 命令行：打印特征 + 建议旋钮 + 理由（JSON）
-uv run python scripts/smoke_image.py                # 冒烟：生成 64×48 测试 PNG → 旋钮 → 编曲规格
+uv run python -m src.feel.image_spec 封面.jpg       # 命令行：视觉解读 + 颜色修正 → 建议旋钮 + 理由（JSON；无 key 自动退回颜色规则）
+uv run python -m src.feel.image_spec --no-vision 封面.jpg   # 只用颜色规则（离线）
+uv run python -m src.feel.vision 封面.jpg           # 只看六个角度的读图结果
+uv run make test                                    # 单元测试：JSON 解析 / 融合 / 缓存 / 无 key 兜底（不联网）
+uv run python scripts/smoke_image.py                # 冒烟：生成 64×48 测试 PNG → 旋钮 → 编曲规格（有 key 时再测视觉解读）
+uv run python scripts/smoke_image.py --image 封面.jpg   # 用真实图片测视觉解读
 uv run python scripts/smoke_image.py --url http://127.0.0.1:8765 --preview   # 连同接口 + 试听一起测
 ```
 
-接口：`POST /api/from-image`（multipart：`file`=图片，可选 `preview`=1 顺便渲试听、`fallback`=1 草稿音色）→
-`{"knobs", "duck", "voice_label", "feel", "reasons", "features", "thumbnail"(data URL), "preview"(同 /api/generate 返回或 null)}`。
+接口：`POST /api/from-image`（multipart：`file`=图片，可选 `vision`=0 关闭视觉解读（默认 1）、`preview`=1 顺便渲试听、
+`fallback`=1 草稿音色）→ `{"source"("vision"/"color"), "vision"(六角度解读 + 数值建议 + mood_zh/content_zh/feeling_zh，或 null),
+"vision_error"(退回颜色规则的原因或 null), "image_reading"(写进编曲规格的读图), "knobs", "color_knobs", "duck", "voice_label",
+"feel", "reasons", "features", "thumbnail"(data URL), "preview"(同 /api/generate 返回或 null)}`。
+`POST /api/generate` 可带 `image_reading`（图片模式下前端会自动带上），`GET /api/health` 的 `vision` 字段表示当前可用的视觉接口。
 图片上限 20 MB；需要 `python-multipart`（已在 web 依赖里）和 `pillow`（核心依赖）。
 
 ### 背后的流程
@@ -371,13 +421,14 @@ samples/
 │   │   ├── mapping.py        指标 / hunk → 音符事件
 │   │   └── pipeline.py       写 midi/analyze → render → mix → out/analyze.wav
 │   ├── feel/                 一句话感觉 + 旋钮 → 编曲规格（spec.py）→ MIDI（compose.py）→ 带缓存渲染混音（render.py）；
-│   │                         图片 → 旋钮（image_spec.py，Pillow 规则映射，无 ML）
+│   │                         图片 → 旋钮（vision.py 看图模型六角度读图为主 + image_spec.py Pillow 颜色 ±10 修正 / 兜底）
 │   └── web/app.py            网页界面后端（FastAPI，musician serve）
 ├── web/                      网页前端（index.html + style.css + app.js，无框架）
 ├── musician/                 `musician` 命令行入口（cli.py；musician serve；python -m musician.analyze）
 ├── examples/analyze_self.mid 分析本项目 src/ 生成的示例 MIDI
 ├── instruments/*.sfz         SFZ 覆盖层（起音/滤波/力度曲线）
 ├── presets/                  Surge XT 音色选择（surge_presets.json + 说明）
+├── tests/test_vision.py      视觉解读单元测试（JSON 解析 / 融合 / 缓存 / 兜底，HTTP 已 mock；make test）
 ├── scripts/
 │   ├── run_pipeline.sh       一键运行
 │   ├── fetch_samples.sh      下载采样包
@@ -451,6 +502,10 @@ Output: `midi/analyze/*.mid`, `build/analyze/analysis.json`, `out/analyze.wav`.
 the narration script, adjust five knobs (mood, speed, density, brightness, voice priority), preview ~20 s in the
 browser, re-render tweaks (only parts whose MIDI changed are re-rendered), export the full track (WAV/MP3/MIDI).
 Backend: FastAPI over `src/feel` (text+knobs → ArrangementSpec → mido MIDI → existing renderers + mix).
-**Image → music**: upload an image (`POST /api/from-image`); `src/feel/image_spec.py` (Pillow, no ML) maps dominant
-hue → mood/brightness, luminance → brightness/speed bias, edge density → density, colour variance → energy
-(speed, and voice/duck), then the knobs stay editable for re-renders.
+**Image → music**: upload an image (`POST /api/from-image`). By default `src/feel/vision.py` asks a vision LLM
+(OpenAI-compatible via `OPENAI_API_KEY`/`OPENAI_BASE_URL`, or Anthropic via `ANTHROPIC_API_KEY`; `CTM_VISION_MODEL`
+overrides) to read the whole image from six angles (mood, content, feeling, story/scene, rhythm, colour & light) plus
+energy/brightness/density, key, BPM and voice priority; these drive the knobs and are written into the spec
+(`image_reading`). The Pillow colour rules (`src/feel/image_spec.py`: hue → mood/brightness, luminance, edge density →
+density, colour variance → energy) only bias each knob by ≤ ±10, and are the automatic offline fallback (no key,
+timeout, bad JSON, or `--no-vision` / unticking 使用视觉解读). Interpretations are cached by image SHA-256.

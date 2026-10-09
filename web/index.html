@@ -29,10 +29,12 @@
     <div class="image-row">
       <div class="image-pick">
         <span class="label">从图片生成</span>
-        <p class="hint">上传封面 / 截图 / 照片：按主色调、明暗、细节多少、色彩丰富度自动设好旋钮，之后仍可手动微调。</p>
+        <p class="hint">上传封面 / 截图 / 照片：看图模型会从情绪、内容、感受、故事、节奏、光影多个角度「读懂」整张图，再据此设好旋钮（颜色只做轻微修正），之后仍可手动微调。</p>
         <input type="file" id="image-file" accept="image/*" hidden>
         <button id="btn-image" class="btn" type="button">上传图片</button>
+        <label class="draft inline"><input type="checkbox" id="image-vision" checked> 使用视觉解读</label>
         <label class="draft inline"><input type="checkbox" id="image-auto" checked> 上传后自动生成试听</label>
+        <p class="hint vision-note" id="vision-note" hidden></p>
         <button id="btn-image-clear" class="link-btn" type="button" hidden>清除图片</button>
       </div>
       <figure class="thumb" id="image-thumb" hidden>
@@ -40,6 +42,14 @@
         <figcaption><span id="image-name"></span><span class="palette" id="image-palette"></span></figcaption>
       </figure>
     </div>
+  </section>
+
+  <section class="card reading" id="reading-card" hidden aria-live="polite">
+    <div class="reading-head"><strong>这张图在说什么</strong><span id="reading-src"></span></div>
+    <p class="fallback-note" id="reading-fallback" hidden></p>
+    <div class="angles" id="reading-angles"></div>
+    <div class="kw" id="reading-kw"></div>
+    <p class="narr" id="reading-narr" hidden></p>
   </section>
 
   <section class="card knobs">

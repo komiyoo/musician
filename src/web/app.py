@@ -3,8 +3,9 @@
   GET  /                 web/index.html (static frontend)
   POST /api/parse        {"feel"} → suggested knobs + reasons
   POST /api/generate     {"feel","knobs","full":false,"fallback":false} → audio URLs + 编曲规格
-  POST /api/from-image   multipart: file=<图片> [, preview=0/1, fallback=0/1]
-                         → 建议旋钮 + 感觉描述 + 画面特征 + 缩略图（preview=1 时顺便渲一段试听）
+  POST /api/from-image   multipart: file=<图片> [, vision=1/0, preview=0/1, fallback=0/1]
+                         → 多角度读图（vision=1，看图模型）+ 建议旋钮 + 感觉描述 + 画面特征 + 缩略图
+                           （没配 API Key / 失败时自动退回颜色规则，原因在 vision_error；preview=1 时顺便渲试听）
   GET  /media/<file>     rendered WAV / MP3 / MIDI from out/web/
 
 Run:  python -m src.web.app [--port 8765] [--fallback]   (or: musician serve / make web)
@@ -49,6 +50,7 @@ class GenReq(BaseModel):
     knobs: Knobs | None = None       # None → derive from the text
     full: bool = False               # False = ~20 s 试听, True = 完整轨
     fallback: bool = False           # True = 草稿音色（numpy 兜底合成器，最快）
+    image_reading: dict | None = None  # 图片模式：/api/from-image 返回的多角度读图，原样带回写进编曲规格
 
 
 def _url(path: str | None) -> str | None:
@@ -57,8 +59,10 @@ def _url(path: str | None) -> str | None:
 
 @app.get("/api/health")
 def health():
+    from src.feel.vision import available_provider
     from src.render import sfizz_render, surge_render
     return {"ok": True, "force_fallback": FORCE_FALLBACK, "surge": surge_render.available_backend(),
+            "vision": available_provider(),
             "sfizz": sfizz_render.sfizz_available(), "voice_labels": VOICE_LABELS, "defaults": DEFAULT_KNOBS}
 
 
@@ -75,11 +79,12 @@ def generate(req: GenReq):
         knobs, reasons = parse_feel(req.feel)
     else:
         knobs = req.knobs.model_dump()
-    return _render(req.feel, knobs, reasons, full=req.full, fallback=req.fallback)
+    return _render(req.feel, knobs, reasons, full=req.full, fallback=req.fallback, image_reading=req.image_reading)
 
 
-def _render(feel: str, knobs: dict, reasons: list[str], full: bool = False, fallback: bool = False) -> dict:
-    spec = build_spec(feel, knobs, preview=not full)
+def _render(feel: str, knobs: dict, reasons: list[str], full: bool = False, fallback: bool = False,
+            image_reading: dict | None = None) -> dict:
+    spec = build_spec(feel, knobs, preview=not full, image_reading=image_reading)
     try:
         res = R.generate(spec, fallback=fallback or FORCE_FALLBACK)
     except Exception as e:  # noqa: BLE001
@@ -95,8 +100,10 @@ def _render(feel: str, knobs: dict, reasons: list[str], full: bool = False, fall
 
 
 @app.post("/api/from-image")
-async def from_image(file: UploadFile = File(...), preview: bool = Form(False), fallback: bool = Form(False)):
-    """图片 → 建议旋钮 + 感觉描述（规则映射，见 src/feel/image_spec.py）；preview=1 时再渲一段 ~20 秒试听。"""
+async def from_image(file: UploadFile = File(...), preview: bool = Form(False), fallback: bool = Form(False),
+                     vision: bool = Form(True)):
+    """图片 → 多角度读图（看图模型，vision=1）+ 建议旋钮 + 感觉描述；颜色规则做 ±10 修正 / 兜底
+    （见 src/feel/vision.py、image_spec.py）；preview=1 时再渲一段 ~20 秒试听。"""
     from PIL import Image, UnidentifiedImageError
     from starlette.concurrency import run_in_threadpool
 
@@ -107,13 +114,14 @@ async def from_image(file: UploadFile = File(...), preview: bool = Form(False), 
     if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(413, "图片太大（上限 20 MB）")
     try:
-        sug = await run_in_threadpool(suggest_from_image, data)
+        sug = await run_in_threadpool(suggest_from_image, data, vision)
         thumb = await run_in_threadpool(thumbnail_data_url, data)
     except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError) as e:
         raise HTTPException(400, "无法识别的图片（支持 JPG / PNG / WebP / GIF / BMP 等）") from e
     out = {**sug.to_dict(), "filename": file.filename, "thumbnail": thumb, "preview": None}
     if preview:
-        out["preview"] = await run_in_threadpool(_render, sug.feel, sug.knobs, sug.reasons, False, fallback)
+        out["preview"] = await run_in_threadpool(_render, sug.feel, sug.knobs, sug.reasons, False, fallback,
+                                                 sug.image_reading)
     return out
 
 

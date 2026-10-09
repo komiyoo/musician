@@ -10,6 +10,7 @@ const WORDS = {
 let voice = 1;
 let busy = false;
 let fromImage = false;   // knobs were set from an uploaded image → 生成试听 keeps them instead of re-reading the text
+let imageReading = null; // 多角度读图（/api/from-image），图片模式下随每次生成带回后端写进编曲规格
 
 function word(k, v) { return WORDS[k][Math.min(4, Math.floor(v / 20))]; }
 function showKnob(k) { $(k + "-v").textContent = word(k, +$(k).value); }
@@ -44,7 +45,8 @@ async function generate({ full = false, useKnobs = true } = {}) {
   lock(true);
   const t0 = performance.now();
   status(full ? "正在渲染完整轨（约 1 分钟的音乐，可能要几十秒）…" : "正在生成试听…", "busy");
-  const body = { feel: $("feel").value, full, fallback: $("fallback").checked, knobs: useKnobs ? getKnobs() : null };
+  const body = { feel: $("feel").value, full, fallback: $("fallback").checked, knobs: useKnobs ? getKnobs() : null,
+    image_reading: fromImage ? imageReading : null };
   try {
     const r = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const d = await r.json();
@@ -93,16 +95,20 @@ async function uploadImage(file) {
   lock(true);
   const auto = $("image-auto").checked;
   const t0 = performance.now();
-  status(auto ? "正在分析图片并生成试听…" : "正在分析图片…", "busy");
+  const useVision = $("image-vision").checked;
+  status((useVision ? "看图模型正在读图（约 5–30 秒）" : "正在分析图片颜色") + (auto ? "，随后生成试听…" : "…"), "busy");
   const fd = new FormData();
   fd.append("file", file);
   fd.append("preview", auto ? "1" : "0");
   fd.append("fallback", $("fallback").checked ? "1" : "0");
+  fd.append("vision", useVision ? "1" : "0");
   try {
     const r = await fetch("/api/from-image", { method: "POST", body: fd });
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || r.statusText);
     fromImage = true;
+    imageReading = d.image_reading || null;
+    showReading(d, useVision);
     setKnobs(d.knobs);
     $("feel").value = d.feel;
     $("image-preview").src = d.thumbnail;
@@ -112,11 +118,12 @@ async function uploadImage(file) {
     $("btn-image-clear").hidden = false;
     $("reasons").innerHTML = d.reasons.map((x) => `<li>${esc(x)}</li>`).join("");
     const secs = ((performance.now() - t0) / 1000).toFixed(1);
+    const how = d.source === "vision" ? "按读图结果" : "按图片颜色";
     if (d.preview) {
       showPreview(d.preview);
-      status(`已按图片设好旋钮并生成 ${d.preview.duration_s} 秒试听（用时 ${secs} 秒）。可以继续拖旋钮，再点「微调后再渲」。`);
+      status(`已${how}设好旋钮并生成 ${d.preview.duration_s} 秒试听（用时 ${secs} 秒）。可以继续拖旋钮，再点「微调后再渲」。`);
     } else {
-      status("已按图片设好旋钮。点「生成试听」听听看，或先拖动旋钮微调。");
+      status(`已${how}设好旋钮。点「生成试听」听听看，或先拖动旋钮微调。`);
     }
   } catch (e) {
     status("图片分析失败：" + e.message, "err");
@@ -125,8 +132,34 @@ async function uploadImage(file) {
     $("image-file").value = "";
   }
 }
+// 多角度读图卡片：情绪氛围 / 画面内容 / 给人的感觉 / 故事·场景 / 节奏暗示 / 色调与光影
+function showReading(d, useVision) {
+  const v = d.vision;
+  $("reading-card").hidden = false;
+  const fb = $("reading-fallback");
+  if (v) {
+    $("reading-src").textContent = `视觉解读 · ${v.model}${v.cached ? " · 缓存" : ` · ${v.seconds} 秒`}`;
+    fb.hidden = true;
+    $("reading-angles").innerHTML = v.angles.map((a) =>
+      `<div class="angle${["mood", "content", "feeling"].includes(a.key) ? " main" : ""}"><h3>${esc(a.title)}</h3><p>${esc(a.text)}</p>` +
+      (a.keywords.length ? `<div class="tags">${a.keywords.map((k) => `<span class="tag">${esc(k)}</span>`).join("")}</div>` : "") + "</div>").join("");
+    const kw = (d.image_reading && d.image_reading.keywords) || v.keywords || [];
+    $("reading-kw").innerHTML = kw.map((k) => `<span class="tag">${esc(k)}</span>`).join("");
+    $("reading-narr").hidden = !v.narration_hint;
+    $("reading-narr").textContent = v.narration_hint ? "口播建议：" + v.narration_hint : "";
+  } else {
+    $("reading-src").textContent = "颜色规则（未使用视觉解读）";
+    fb.hidden = !useVision;
+    fb.textContent = d.vision_error ? "视觉解读不可用：" + d.vision_error : "";
+    $("reading-angles").innerHTML = `<div class="angle"><h3>画面颜色</h3><p>${esc(d.feel.replace(/^图片配乐：/, ""))}</p></div>`;
+    $("reading-kw").innerHTML = "";
+    $("reading-narr").hidden = true;
+  }
+}
 function clearImage() {
   fromImage = false;
+  imageReading = null;
+  $("reading-card").hidden = true;
   $("image-thumb").hidden = true;
   $("btn-image-clear").hidden = true;
   $("image-preview").removeAttribute("src");
@@ -154,4 +187,8 @@ $("btn-export").addEventListener("click", () => generate({ full: true, useKnobs:
 fetch("/api/health").then((r) => r.json()).then((h) => {
   setKnobs(h.defaults);
   if (h.force_fallback) { $("fallback").checked = true; $("fallback").disabled = true; }
+  if (!h.vision) {
+    $("vision-note").hidden = false;
+    $("vision-note").textContent = "未检测到视觉模型 API Key（OPENAI_API_KEY / ANTHROPIC_API_KEY），上传图片时会自动改用颜色规则。";
+  }
 }).catch(() => setKnobs({ mood: 40, speed: 50, density: 50, brightness: 50, voice: 1 }));

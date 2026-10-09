@@ -104,6 +104,7 @@ class ArrangementSpec:
     lead_melody: bool
     rit_bpm: dict = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)   # plain-language explanation
+    image_reading: dict | None = None    # 多角度读图结果（src/feel/vision.py → image_spec.fuse_vision），无图为 None
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -125,7 +126,7 @@ CADENCE = {
 
 
 def build_spec(text: str, knobs: dict | None = None, preview: bool = True,
-               duration_s: float | None = None) -> ArrangementSpec:
+               duration_s: float | None = None, image_reading: dict | None = None) -> ArrangementSpec:
     k = {**DEFAULT_KNOBS, **(knobs or {})}
     mood, speed, dens, bright = (clamp(float(k[x]), 0, 100) / 100 for x in ("mood", "speed", "density", "brightness"))
     voice = int(clamp(int(k["voice"]), 0, 2))
@@ -218,6 +219,9 @@ def build_spec(text: str, knobs: dict | None = None, preview: bool = True,
                   2: "整体 −15 LUFS，音乐更突出（片头 / 无口播段落）"}[voice])
     if not preview and script_seconds(text):
         notes.append(f"根据口播稿字数估算时长约 {script_seconds(text)} 秒")
+    if image_reading:
+        notes.extend(image_reading_notes(image_reading, key=key, bpm=bpm, parts=parts, lead=lead, drums=drums,
+                                         voice=voice))
 
     return ArrangementSpec(
         feel=text or "", knobs={"mood": int(mood * 100), "speed": int(speed * 100), "density": int(dens * 100),
@@ -226,5 +230,30 @@ def build_spec(text: str, knobs: dict | None = None, preview: bool = True,
         duration_s=round(bars * sec_per_bar + tail, 1), tail_s=tail, preview=preview,
         progression=prog, sections=sections, parts=parts, piano_rhythm=piano_rhythm, arp=arp, drums=drums,
         pad_brightness_cc74=cc74, duck_for_voice=duck, voice_mode=VOICE_LABELS[voice], bed_lufs=bed_lufs,
-        lead_melody=lead, rit_bpm=rit, notes=notes,
+        lead_melody=lead, rit_bpm=rit, notes=notes, image_reading=image_reading or None,
     )
+
+
+def image_reading_notes(r: dict, *, key: str, bpm: int, parts: list[str], lead: bool, drums: str,
+                        voice: int) -> list[str]:
+    """How each reading angle shows up in the arrangement (plain language, shown under the player)."""
+    ang = {a.get("key"): a for a in r.get("angles") or []}
+    out: list[str] = []
+
+    def t(k):
+        return (ang.get(k) or {}).get("text", "")
+    if t("mood"):
+        out.append(f"读图·情绪氛围「{t('mood')}」→ {key}（{'明亮' if key.startswith('F') else '沉静'}的调性）")
+    if t("content") or t("story"):
+        out.append(f"读图·画面/故事「{t('content') or t('story')}」→ "
+                   f"{'有小提琴主旋律讲故事' if lead else '不加主旋律，只铺和声'}")
+    if t("feeling"):
+        out.append(f"读图·给人的感觉「{t('feeling')}」→ {VOICE_LABELS[voice]}，"
+                   f"{'鼓点' + {'light': '轻', 'full': '完整'}[drums] if drums != 'off' else '不加鼓'}")
+    if t("rhythm"):
+        out.append(f"读图·节奏暗示「{t('rhythm')}」→ {bpm} BPM（模型建议 {r.get('suggested_bpm', bpm)}）")
+    if t("light"):
+        out.append(f"读图·色调与光影「{t('light')}」→ 声部 {len(parts)} 个、音色亮度随之调整")
+    if r.get("narration_hint"):
+        out.append(f"口播建议：{r['narration_hint']}")
+    return out

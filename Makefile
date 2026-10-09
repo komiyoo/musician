@@ -4,7 +4,7 @@ UV := $(shell command -v uv 2>/dev/null)
 PY ?= $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
 REQ_HEADER := \# 由 uv.lock 自动生成（make requirements），供不用 uv 的 pip 用户；请改 pyproject.toml，不要手改本文件。
 
-.PHONY: all score render render-fallback mix samples clean analyze analyze-diff demo-analyze web web-deps smoke-image \
+.PHONY: all score render render-fallback mix samples clean analyze analyze-diff demo-analyze web web-deps smoke-image test \
         sync lock requirements serve
 all: score render mix            ## full pipeline (uses Surge/sfizz/samples if present)
 
@@ -26,6 +26,8 @@ web:                             ## web UI at http://127.0.0.1:$(or $(PORT),8765
 	$(PY) -m src.web.app --port $(or $(PORT),8765) $(if $(FALLBACK),--fallback,)
 smoke-image:                     ## image → music smoke test (tiny generated PNG → knobs → spec; URL=http://... also hits the API)
 	$(PY) scripts/smoke_image.py $(if $(URL),--url $(URL) --preview,)
+test:                            ## unit tests (vision JSON parse / fusion / cache / no-key fallback; offline, HTTP mocked)
+	$(PY) -m unittest discover -s tests -v
 serve: web                       ## alias of `make web`
 web-deps:                        ## install FastAPI + uvicorn for the web UI (uv sync --extra web; pip fallback)
 ifdef UV
