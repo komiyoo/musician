@@ -99,12 +99,15 @@ musician analyze /path/to/repo                     # 整个仓库 → out/analyz
 musician analyze --diff /path/to/repo              # 未提交改动 vs HEAD（干净时用 HEAD~1..HEAD）→ out/analyze_diff.wav
 musician analyze --diff --rev v1.0..main /path/to/repo   # 指定范围；--rev <commit> = 该提交相对父提交
 python -m musician.analyze src                     # 等价写法：分析本项目自己的 src/
-make analyze REPO=../my-project                    # Makefile 快捷方式（另有 make analyze-diff）
+make analyze REPO=../my-project                    # Makefile 快捷方式（另有 make analyze-diff，默认带 --heat）
+make demo-analyze                                  # 演示：分析本项目 src/ → out/analyze.wav (+ .mp3) + out/analysis.json
 
 # 常用选项
 --midi-only     只写 MIDI + analysis.json，不渲染
 --fallback      强制 numpy 兜底合成器（不装 Surge/sfizz 也能出声）
---max-bars N    长度上限（默认整仓 48 小节 / diff 32 小节；100 BPM 下每小节 2.4 秒）
+--max-bars N    长度上限（默认整仓 48 小节 / diff 32 小节；100 BPM 下每小节 2.4 秒）；硬上限，超出时保留「最热」的文件 / hunk
+--heat          diff 模式：加一条随改动密度起伏的中提琴 heat 轨
+--summary F     额外写一份精简摘要 JSON（形式、协和/不协和段落统计、最热文件）
 --no-js         只分析 .py
 --voice 口播.wav 和主流程一样按口播自动避让
 ```
@@ -120,7 +123,8 @@ make analyze REPO=../my-project                    # Makefile 快捷方式（另
 | 文件 | 一个段落，1–4 小节（∝ 非空行数），按路径顺序演奏；第 1 小节是只有 pad 的引子 | 大文件 = 长段落 |
 | 函数 | 该文件段落里的一个**钢琴动机**，时间槽 ∝ 函数行数，起音从当前和弦音中按函数名哈希选取 | 每个函数有自己的「签名旋律」 |
 | **嵌套深度** | 动机的**音区**：0 层 A3 → 1 层 D4 → 2 层 G4 → 3 层 C5 → ≥4 层 E5；力度随深度增加 | 嵌套越深越高越紧 |
-| **圈复杂度** | 动机音符数（1 + (cx−1)/2，最多 8）；琶音**节奏密度**（cx<3 四分 / <6 八分 / ≥6 十六分）；cx≥6 段落加入 Gm、cx≥10 加入属和弦 A，且动机里插入半音摩擦、琶音每 4 个音换成小二度/三全音 | 复杂代码 = 更密、更不协和 |
+| **圈复杂度** | 动机音符数（1 + (cx−1)/2，最多 8）；琶音**节奏密度**（cx<3 四分 / <6 八分 / ≥6 十六分）；同时参与下面的「张力」 | 复杂代码 = 更密 |
+| **张力 t**（复杂度 + 嵌套 + 注释率，见下节） | 中提琴和声音程（3/5/6 度 ↔ 小二度/三全音）、和弦（t≥0.45 偶数小节 Gm，t≥0.70 段尾属和弦 A）、琶音半音替换频率、各声部力度与断奏程度 | 好读的代码协和，难读的代码刺耳 |
 | **import** | 段落开头的打击乐：标准库 → 边击（rim），第三方 → 底鼓，本地/相对导入 → 军鼓，八分音符排开 | 依赖多 = 开头一串鼓点 |
 | **控制流密度**（每 10 行的 if/for/while/try/with/match 数） | 踩镲细分（无 / 四分 / 八分 / 十六分）+ 贝斯律动（全音符 / 二分 / 推进型） | 分支越多律动越碎 |
 | **注释率**（注释 + docstring 行 / 非空行） | pad 的**力度**和**亮度**（CC74；兜底合成器里映射为 pad 低通截止 500–3800 Hz） | 文档写得好，和声更亮更饱满 |
@@ -128,13 +132,47 @@ make analyze REPO=../my-project                    # Makefile 快捷方式（另
 | 类定义 | 大提琴持续根音 | |
 | 语法错误 | 整段属和弦 + 不协和琶音 | |
 
+### 协和度层（codephon 思路）
+
+每个文件 / 函数算一个**张力** `t ∈ [0,1]`（越大越「拧巴」）：
+
+```
+t = 0.45 · clamp((圈复杂度 − 2) / 10)      # 复杂度 2 → 0，12 → 1
+  + 0.35 · clamp((嵌套深度 − 1) / 4)       # ≤1 层 → 0，5 层 → 1
+  + 0.20 · clamp(1 − 注释率 / 0.30)        # 注释 ≥30% → 0
+```
+
+函数动机用 `0.5·t(文件) + 0.5·t(函数)`。每个钢琴动机音下方配一个**中提琴**声部：
+
+| t | 色彩 | 音程（D 小调） | 演奏 |
+|---|---|---|---|
+| < 0.35 | consonant | 自然音阶内的三度 / 六度 / 五度 | 连奏、柔和 |
+| 0.35–0.65 | mixed | 以三度为主，每第 3 个音换成四度或七度 | 稍短 |
+| ≥ 0.65 | dissonant | 小二度 / 三全音（偶尔大七度、大二度） | 断奏、力度 +10~18，倒数第二个旋律音再升半音 |
+
+同一个 t 还决定：段落和弦（t≥0.45 偶数小节换 Gm，t≥0.70 段尾换属和弦 A），琶音每 4 个（t≥0.45）或每 2 个（t≥0.70）
+音换成小二度/三全音，贝斯 / 踩镲 / 琶音力度随 t 变硬、音长随 t 变短。
+`build/analyze/analysis.json` 的 `plan[*]` 里记录每段的 `tension`、`color` 和动机色彩统计 `motif_colors`。
+
+### 长度上限与「最热文件」优先
+
+- **热度** `heat = Σ函数圈复杂度 × (1 + churn)`，churn = `git log --numstat` 里该文件累计增删行数（非 git 目录时 churn=0，退化成纯复杂度）。
+- 文件数 > 可用小节数时保留最热的文件（仍按路径顺序演奏），被丢掉的列在 `files_dropped`；
+  小节数按预算整体缩放，再从最冷的长段落开始削减；段落里函数槽位不够时，优先给 `复杂度 × 行数` 最大的函数。
+- 结果总长**严格 ≤ `--max-bars`**（1 小节引子 + 正文 + 2 小节终止），大仓库不会再超长。
+
 ### 映射规则（diff 模式）
 
 - 每个变更块（hunk）→ ½ 小节（≤8 行）或 1 小节（>8 行）的短动机，按 diff 顺序排列；
-- **新增行上行**：`.py` 用钢琴、`.js/.ts` 用琶音合成器、`.md/.txt` 用小提琴；音高步进来自该行文本的哈希，力度来自行长；
-- **删除行下行**：大提琴低音区；删除多于新增的小节换成 Gm；
+- **新增行上行**：`.py` 用钢琴、`.js/.ts` 用琶音合成器、`.md/.txt` 用小提琴；力度来自行长；
+- **音高轮廓跟随复杂度变化**：每个 hunk 计算 `Δ = 新增行复杂度 − 删除行复杂度`（分支关键字 if/for/while/except/case/and/or/&&/||/? + 最深缩进；
+  README 等非代码文件记 0），按 hunk 大小归一化到 `[-1, 1]`。Δ>0（变复杂）→ 起音更高、上行更陡、音更短更响，结尾配小二度/三全音；
+  Δ≤0（简化 / 重构）→ 平缓上行，结尾配一个协和三度；
+- **删除行下行**：大提琴低音区，被删代码越复杂下行越陡；删除多于新增的小节换成 Gm；
+- **heat 轨**（`--heat`）：每小节改动行数 / 最大值 → 中提琴在和弦五音上的重复音型（无 / 四分 / 八分 / 十六分），
+  力度与 CC11 表情随之起伏，最热的小节跳八度；`analysis.json` 里有 `heat_per_bar`；
 - 每进入一个新文件敲一下底鼓，每个 hunk 一下踩镲，改动涉及 `import` 时加边击；
-- 超过 `--max-bars` 的 hunk 会被截掉并在终端提示。
+- 超过 `--max-bars` 时按 `行数 × (1 + 复杂度)` 保留最热的 hunk（仍按 diff 顺序），大 hunk 必要时压缩到半小节，丢弃数量在终端提示。
 
 > JS/TS 分析是无依赖的启发式扫描（去掉字符串/注释后数花括号和关键字），Python 分析用标准库 `ast` + `tokenize`，结果精确。
 
@@ -294,6 +332,9 @@ master to −18 LUFS. Without Surge/sfizz/samples, a numpy fallback synth render
 pipeline (D minor, 100 BPM): files → sections, functions → piano motifs, nesting depth → register,
 cyclomatic complexity → motif length / arp density / harmonic tension, imports → percussion
 (stdlib rim, third-party kick, local snare), control-flow density → hi-hat subdivision, comment ratio →
-pad velocity & brightness (CC74), repeated snippets → violin canon echo. `musician analyze --diff <repo>`
+pad velocity & brightness (CC74), repeated snippets → violin canon echo. A codephon-style consonance layer turns
+complexity + nesting + (lack of) comments into a tension score: calm code gets viola 3rds/5ths/6ths, knotty code gets
+minor 2nds/tritones, harder velocities and staccato. Long repos are capped at `--max-bars`, keeping the hottest files
+(complexity × git churn). `make demo-analyze` renders this repo's own `src/`. `musician analyze --diff <repo>`
 turns git diff hunks into short motifs (added lines ascend, removed lines descend on cello).
 Output: `midi/analyze/*.mid`, `build/analyze/analysis.json`, `out/analyze.wav`.

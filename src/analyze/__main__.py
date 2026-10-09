@@ -17,6 +17,9 @@ def build_parser(ap: argparse.ArgumentParser | None = None) -> argparse.Argument
     ap.add_argument("--midi-only", action="store_true", help="write MIDI + analysis.json, skip render/mix")
     ap.add_argument("--fallback", action="store_true", help="force the numpy sketch synth (no Surge/sfizz)")
     ap.add_argument("--out", help="output WAV (default out/analyze.wav or out/analyze_diff.wav)")
+    ap.add_argument("--heat", action="store_true",
+                    help="with --diff: add a viola heat track that follows churn density per bar")
+    ap.add_argument("--summary", metavar="JSON", help="also write a short analysis summary JSON here")
     ap.add_argument("--voice", help="narration WAV to duck under (same as src.mix.mix --voice)")
     return ap
 
@@ -25,7 +28,8 @@ def main(argv=None):
     a = build_parser().parse_args(argv)
     from src.analyze.pipeline import run
     run(a.repo, diff=a.diff, rev=a.rev, max_bars=a.max_bars, include_js=not a.no_js,
-        render=not a.midi_only, fallback=a.fallback, out=a.out, voice=a.voice)
+        render=not a.midi_only, fallback=a.fallback, out=a.out, voice=a.voice,
+        heat=a.heat, summary_out=a.summary)
 
 
 if __name__ == "__main__":

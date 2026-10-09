@@ -1,6 +1,6 @@
-PY ?= python
+PY ?= $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
 
-.PHONY: all score render render-fallback mix samples clean analyze analyze-diff
+.PHONY: all score render render-fallback mix samples clean analyze analyze-diff demo-analyze
 all: score render mix            ## full pipeline (uses Surge/sfizz/samples if present)
 
 score:                           ## 1. compose -> midi/*.mid
@@ -14,7 +14,9 @@ mix:                             ## 3. loudness align + FX + master -> out/final
 analyze:                         ## code structure of REPO (default: ./src) -> midi/analyze/*.mid -> out/analyze.wav
 	$(PY) -m musician.analyze $(or $(REPO),src)
 analyze-diff:                    ## git diff of REPO (default: .) -> midi/analyze/diff/*.mid -> out/analyze_diff.wav
-	$(PY) -m musician.analyze --diff $(or $(REPO),.)
+	$(PY) -m musician.analyze --diff --heat $(or $(REPO),.)
+demo-analyze:                    ## demo: this project's own src/ -> out/analyze.wav (+ .mp3) + out/analysis.json
+	$(PY) -m musician.analyze src --summary out/analysis.json $(if $(FALLBACK),--fallback,)
 samples:                         ## download free sample packs into ./samples
 	bash scripts/fetch_samples.sh all
 clean:

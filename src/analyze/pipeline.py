@@ -8,6 +8,7 @@ The main 22-bar score in midi/*.mid and out/final.wav is never touched.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
 
 import mido
@@ -65,9 +66,27 @@ def render_and_mix(parts: list[str], out: Path, fallback: bool, voice: str | Non
     mix.main(["--out", str(out)] + (["--voice", voice] if voice else []))
 
 
+def short_summary(meta: dict) -> dict:
+    """Compact digest of analysis.json: form, consonance balance, hottest sections."""
+    keys = ("mode", "repo", "range", "key", "bpm", "bars", "duration_s", "progression", "parts",
+            "summary", "hunks", "hunks_dropped", "files_dropped", "heat_per_bar")
+    out = {k: meta[k] for k in keys if k in meta}
+    plan = meta.get("plan", [])
+    out["colors"] = dict(Counter(p.get("color") for p in plan if p.get("color")))
+    if meta.get("mode") == "repo":
+        out["sections"] = [{k: p[k] for k in ("file", "bars", "chords", "tension", "color", "heat", "churn")}
+                           for p in plan]
+        out["hottest"] = [p["file"] for p in sorted(plan, key=lambda p: -p["heat"])[:5]]
+    else:
+        out["hunks_sonified"] = [{k: p[k] for k in ("file", "beat", "added", "removed", "cx_delta", "color")}
+                                 for p in plan]
+    return out
+
+
 def run(repo: str, diff: bool = False, rev: str | None = None, max_bars: int | None = None,
         include_js: bool = True, render: bool = True, fallback: bool = False,
-        out: str | None = None, voice: str | None = None) -> dict:
+        out: str | None = None, voice: str | None = None, heat: bool = False,
+        summary_out: str | None = None) -> dict:
     repo_p = Path(repo).expanduser().resolve()
     if not repo_p.exists():
         raise SystemExit(f"[analyze] no such path: {repo_p}")
@@ -75,7 +94,7 @@ def run(repo: str, diff: bool = False, rev: str | None = None, max_bars: int | N
         hunks, label = diffscan.diff_hunks(repo_p, rev)
         if not hunks:
             raise SystemExit(f"[analyze] git diff ({label}) has no text hunks to sonify")
-        score, tl, plan, dropped = mapping.compose_diff(hunks, max_bars or 32)
+        score, tl, plan, dropped = mapping.compose_diff(hunks, max_bars or 32, heat=heat)
         profile, default_out = "analyze/diff", C.OUT_DIR / "analyze_diff.wav"
         info = {"mode": "diff", "range": label, "hunks": len(hunks), "hunks_dropped": dropped}
         print(f"[analyze] diff {label}: {len(hunks)} hunks in {len({h.path for h in hunks})} files"
@@ -87,18 +106,25 @@ def run(repo: str, diff: bool = False, rev: str | None = None, max_bars: int | N
         summary = metrics.summarize(files)
         score, tl, plan = mapping.compose_repo(files, max_bars or 48)
         profile, default_out = "analyze", C.OUT_DIR / "analyze.wav"
-        info = {"mode": "repo", "summary": summary, "metrics": [f.to_dict() for f in files]}
+        info = {"mode": "repo", "summary": summary, "files_dropped": tl.dropped,
+                "metrics": [f.to_dict() for f in files]}
         print(f"[analyze] {summary['files']} files, {summary['loc']} LOC, {summary['functions']} functions, "
               f"max depth {summary['max_depth']}, mean complexity {summary['mean_complexity']}, "
-              f"{summary['imports']} imports, comments {summary['comment_ratio']:.0%}, dup {summary['dup_ratio']:.1%}")
+              f"{summary['imports']} imports, comments {summary['comment_ratio']:.0%}, dup {summary['dup_ratio']:.1%}"
+              + (f" ({len(tl.dropped)} coldest files dropped, raise --max-bars)" if tl.dropped else ""))
 
     use_profile(profile, len(tl.chords))
     counts = write_midi(score)
     C.BUILD_DIR.mkdir(parents=True, exist_ok=True)
     meta = {"repo": str(repo_p), "key": C.KEY, "bpm": C.BPM, "bars": C.N_BARS, "rit_bpm": C.RIT_BPM,
             "duration_s": round(C.total_seconds(), 2), "progression": tl.chords, "parts": counts,
-            "plan": plan, **info}
+            "plan": plan, **({"heat_per_bar": tl.heat} if tl.heat else {}), **info}
     (C.BUILD_DIR / "analysis.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1))
+    if summary_out:
+        sp = Path(summary_out)
+        sp.parent.mkdir(parents=True, exist_ok=True)
+        sp.write_text(json.dumps(short_summary(meta), ensure_ascii=False, indent=1))
+        print(f"[analyze] summary -> {sp}")
     rel = C.MIDI_DIR.relative_to(C.ROOT)
     print(f"[analyze] {C.KEY}, {C.BPM} BPM, {C.N_BARS} bars, ~{C.total_seconds():.1f}s")
     print("[analyze] progression:", " ".join(tl.chords))

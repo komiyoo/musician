@@ -62,6 +62,8 @@ class FileMetrics:
     dup_windows: int = 0
     dup_ratio: float = 0.0
     parse_error: str | None = None
+    churn: int = 0                   # lines added+removed over git history (0 outside a git repo)
+    commits: int = 0                 # commits touching the file
     _windows: list[tuple[int, int]] = field(default_factory=list, repr=False)  # (line, hash)
 
     def to_dict(self) -> dict:
@@ -342,6 +344,30 @@ def list_files(root: Path, include_js: bool = True) -> list[Path]:
     return sorted(keep)
 
 
+def git_churn(root: Path, max_commits: int = 2000) -> dict[str, tuple[int, int]]:
+    """{path relative to root: (lines added+removed, commits)} from `git log --numstat`.
+
+    Renames are followed only as far as numstat reports them (`old => new` paths are
+    credited to the new name). Empty dict when root is not inside a git work tree."""
+    cwd = root if root.is_dir() else root.parent
+    try:
+        out = subprocess.run(["git", "-C", str(cwd), "log", f"-n{max_commits}", "--numstat",
+                              "--format=tformat:@@", "--relative", "--no-renames", "--", "."],
+                             capture_output=True, text=True, check=True).stdout
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return {}
+    churn: dict[str, list[int]] = {}
+    for ln in out.splitlines():
+        parts = ln.split("\t")
+        if len(parts) != 3 or parts[0] == "-":
+            continue
+        a, d, path = parts
+        c = churn.setdefault(path, [0, 0])
+        c[0] += int(a) + int(d)
+        c[1] += 1
+    return {k: (v[0], v[1]) for k, v in churn.items()}
+
+
 def analyze_repo(root: str | Path, include_js: bool = True) -> list[FileMetrics]:
     root = Path(root).resolve()
     if root.is_file():
@@ -364,6 +390,9 @@ def analyze_repo(root: str | Path, include_js: bool = True) -> list[FileMetrics]
         fm.dup_ratio = round(len(dup_lines) / max(1, len(fm._windows)), 3)
         for f in fm.functions:
             f.has_dup = any(f.lineno <= ln <= f.end_lineno for ln in dup_lines)
+    churn = git_churn(root)
+    for fm in res:
+        fm.churn, fm.commits = churn.get(fm.path, (0, 0))
     return res
 
 
@@ -379,4 +408,5 @@ def summarize(files: list[FileMetrics]) -> dict:
         "comment_ratio": round(sum(fm.comment_lines for fm in files) / max(1, sum(fm.loc for fm in files)), 3),
         "dup_ratio": round(sum(fm.dup_windows for fm in files) / max(1, sum(len(fm._windows) for fm in files)), 3),
         "parse_errors": [fm.path for fm in files if fm.parse_error],
+        "churn": sum(fm.churn for fm in files),
     }

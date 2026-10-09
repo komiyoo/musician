@@ -23,7 +23,8 @@ def main(argv=None):
     if a.cmd == "analyze":
         from src.analyze.pipeline import run
         run(a.repo, diff=a.diff, rev=a.rev, max_bars=a.max_bars, include_js=not a.no_js,
-            render=not a.midi_only, fallback=a.fallback, out=a.out, voice=a.voice)
+            render=not a.midi_only, fallback=a.fallback, out=a.out, voice=a.voice,
+            heat=a.heat, summary_out=a.summary)
         return
     from src.mix import mix
     from src.render import render_all
