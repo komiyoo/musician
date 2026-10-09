@@ -3,6 +3,8 @@
   GET  /                 web/index.html (static frontend)
   POST /api/parse        {"feel"} → suggested knobs + reasons
   POST /api/generate     {"feel","knobs","full":false,"fallback":false} → audio URLs + 编曲规格
+  POST /api/from-image   multipart: file=<图片> [, preview=0/1, fallback=0/1]
+                         → 建议旋钮 + 感觉描述 + 画面特征 + 缩略图（preview=1 时顺便渲一段试听）
   GET  /media/<file>     rendered WAV / MP3 / MIDI from out/web/
 
 Run:  python -m src.web.app [--port 8765] [--fallback]   (or: musician serve / make web)
@@ -13,7 +15,7 @@ import argparse
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -21,6 +23,8 @@ from pydantic import BaseModel, Field
 from src import config as C
 from src.feel import render as R
 from src.feel.spec import DEFAULT_KNOBS, VOICE_LABELS, build_spec, parse_feel
+
+MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 WEB_DIR = C.ROOT / "web"
 FORCE_FALLBACK = os.environ.get("CTM_WEB_FALLBACK", "") not in ("", "0")
@@ -71,9 +75,13 @@ def generate(req: GenReq):
         knobs, reasons = parse_feel(req.feel)
     else:
         knobs = req.knobs.model_dump()
-    spec = build_spec(req.feel, knobs, preview=not req.full)
+    return _render(req.feel, knobs, reasons, full=req.full, fallback=req.fallback)
+
+
+def _render(feel: str, knobs: dict, reasons: list[str], full: bool = False, fallback: bool = False) -> dict:
+    spec = build_spec(feel, knobs, preview=not full)
     try:
-        res = R.generate(spec, fallback=req.fallback or FORCE_FALLBACK)
+        res = R.generate(spec, fallback=fallback or FORCE_FALLBACK)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(500, f"生成失败：{e}") from e
     engines = sorted({p["engine"] for p in res["parts"].values()})
@@ -84,6 +92,29 @@ def generate(req: GenReq):
         "rendered": res["rendered"], "reused": res["reused"], "seconds": res["seconds"],
         "engines": engines, "spec": res["spec"], "wav_path": res["wav"],
     }
+
+
+@app.post("/api/from-image")
+async def from_image(file: UploadFile = File(...), preview: bool = Form(False), fallback: bool = Form(False)):
+    """图片 → 建议旋钮 + 感觉描述（规则映射，见 src/feel/image_spec.py）；preview=1 时再渲一段 ~20 秒试听。"""
+    from PIL import Image, UnidentifiedImageError
+    from starlette.concurrency import run_in_threadpool
+
+    from src.feel.image_spec import suggest_from_image, thumbnail_data_url
+    data = await file.read(MAX_IMAGE_BYTES + 1)
+    if not data:
+        raise HTTPException(400, "没有收到图片")
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(413, "图片太大（上限 20 MB）")
+    try:
+        sug = await run_in_threadpool(suggest_from_image, data)
+        thumb = await run_in_threadpool(thumbnail_data_url, data)
+    except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError) as e:
+        raise HTTPException(400, "无法识别的图片（支持 JPG / PNG / WebP / GIF / BMP 等）") from e
+    out = {**sug.to_dict(), "filename": file.filename, "thumbnail": thumb, "preview": None}
+    if preview:
+        out["preview"] = await run_in_threadpool(_render, sug.feel, sug.knobs, sug.reasons, False, fallback)
+    return out
 
 
 @app.get("/media/{name}")

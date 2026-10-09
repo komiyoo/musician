@@ -46,6 +46,8 @@ packaging==26.3
     # via mido
 pedalboard==0.9.26
     # via code-to-music
+pillow==12.3.0
+    # via code-to-music
 pycparser==3.11 ; implementation_name != 'PyPy'
     # via cffi
 pydantic==2.14.0
@@ -53,6 +55,8 @@ pydantic==2.14.0
 pydantic-core==2.50.0
     # via pydantic
 pyloudnorm==0.2.0
+    # via code-to-music
+python-multipart==0.0.32
     # via code-to-music
 scipy==1.15.3 ; python_full_version < '3.11'
     # via

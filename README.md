@@ -225,10 +225,43 @@ uv run musician serve --host 0.0.0.0    # 局域网里其他电脑也能打开
 6. 生成后可以展开「编曲规格 JSON」看具体用了什么速度、段落、声部——只是说明，不看也能用。
 7. 「草稿音色」勾选后用 numpy 兜底合成器，最快；不勾选则自动使用已安装的 Surge XT / sfizz + 采样包。
 
+### 从图片生成（图片 → 音乐）
+
+不想写字？点「**上传图片**」（或把图片拖进那张卡片）：封面、截图、产品照片都行。页面会显示缩略图和主色板，
+自动摆好旋钮、在「感觉」框里写一句画面描述，并列出每条规则的理由；勾选「上传后自动生成试听」时顺便渲 20 秒试听。
+之后**照常拖旋钮** → 「微调后再渲」（只重渲变化的声部），或「生成试听」（图片模式下保留旋钮，不会被文字覆盖；
+在感觉框里重新打字或点示例就回到文字模式）→ 满意了「导出完整轨」。
+
+不用机器学习：`src/feel/image_spec.py` 用 Pillow 把图缩到 256 px，量 4 个直观特征，按固定规则换算成和
+`src/feel/spec.py` 完全一样的旋钮（0–100，是否抢口播 0/1/2），所以结果可解释、可复现：
+
+| 画面特征 | 怎么量 | 影响的旋钮 |
+|---|---|---|
+| 主色相 | HSV 色相 36 档直方图，按 饱和度×明度 加权，只统计有彩色像素（饱和度 ≥ 0.18） | 暖色（红/橙/黄）→ 情绪 +14～+24、亮度 +8～+18；冷色（青/蓝/紫）→ 情绪 −8～−22、亮度 0～−10；绿色/品红 → 略亮。乘以「彩色程度」：黑白灰图色相不起作用 |
+| 平均亮度 | 灰度（Rec.601）均值 | 亮度 = 15 + 75×亮度（主因）；情绪 ±20；速度 ±10 |
+| 边缘密度 | 轻微模糊后 `FIND_EDGES`，响应 > 40 的像素占比（30% 视为满格） | 密度 = 15 + 75×边缘（细节多 → 更多声部、琶音、鼓） |
+| 色彩方差 | RGB 三通道标准差均值（90 视为满格），与饱和度、明暗对比合成「能量」 | 速度 ±27（能量高 → 快）；密度 ±8 |
+| 能量 + 细节 | 0.6×能量 + 0.4×边缘 | ≥ 0.62 → 偏配乐（不 duck）；< 0.22 → 不抢（多让位给人声）；其余 → 平衡 |
+
+情绪基准 40、速度基准 50（= 原版 100 BPM），与文字模式的默认值一致。例子（`scripts/smoke_image.py` 及测试图）：
+纯暖橙亮图 → 情绪 70 / 速度 47 / 密度 13 / 亮度 82 / 不抢（F 大调、只有铺底 + 钢琴 + 琶音）；
+暗蓝 + 大量彩色线条 → 情绪 16 / 速度 68 / 密度 96 / 亮度 33 / 偏配乐（D 小调 113 BPM 全编制带鼓）；
+灰图 → 中性、慢、极疏、不抢。
+
+```bash
+uv run python -m src.feel.image_spec 封面.jpg       # 命令行：打印特征 + 建议旋钮 + 理由（JSON）
+uv run python scripts/smoke_image.py                # 冒烟：生成 64×48 测试 PNG → 旋钮 → 编曲规格
+uv run python scripts/smoke_image.py --url http://127.0.0.1:8765 --preview   # 连同接口 + 试听一起测
+```
+
+接口：`POST /api/from-image`（multipart：`file`=图片，可选 `preview`=1 顺便渲试听、`fallback`=1 草稿音色）→
+`{"knobs", "duck", "voice_label", "feel", "reasons", "features", "thumbnail"(data URL), "preview"(同 /api/generate 返回或 null)}`。
+图片上限 20 MB；需要 `python-multipart`（已在 web 依赖里）和 `pillow`（核心依赖）。
+
 ### 背后的流程
 
 ```
-文字 + 旋钮 ──► src/feel/spec.py     ArrangementSpec（默认 D 小调；速度→BPM；段落 引入/展开/收束；
+文字 / 图片 + 旋钮 ──► src/feel/spec.py     ArrangementSpec（默认 D 小调；速度→BPM；段落 引入/展开/收束；
                                       密度→声部；亮度→pad/琶音；是否抢口播→duck_for_voice + 响度）
            ──► src/feel/compose.py  按规格写音符（复用 write_score 的和弦 / pad 排列 / mido 多轨 MIDI）
            ──► src/feel/render.py   复用 render_all 的渲染器（Surge / sfizz / 兜底，按声部并行），
@@ -238,7 +271,7 @@ uv run musician serve --host 0.0.0.0    # 局域网里其他电脑也能打开
 
 - 网页后端：`src/web/app.py`（FastAPI）；前端：`web/index.html` + `style.css` + `app.js`（无框架）。
 - 接口：`POST /api/generate {"feel": "...", "knobs": {...} 或 null, "full": false, "fallback": false}`，
-  `POST /api/parse {"feel": "..."}`（只返回建议旋钮），`GET /media/<文件名>`。
+  `POST /api/parse {"feel": "..."}`（只返回建议旋钮），`POST /api/from-image`（图片 → 建议旋钮，见上），`GET /media/<文件名>`。
 - 命令行同款：`python -m src.feel.render "轻松温暖的产品介绍" [--full] [--fallback] [--speed 70 ...]`。
 - 缓存在 `build/feel/`，输出在 `out/web/`（都在 .gitignore 里，可随时删除）。
 
@@ -337,7 +370,8 @@ samples/
 │   │   ├── diffscan.py       git diff → hunk
 │   │   ├── mapping.py        指标 / hunk → 音符事件
 │   │   └── pipeline.py       写 midi/analyze → render → mix → out/analyze.wav
-│   ├── feel/                 一句话感觉 + 旋钮 → 编曲规格（spec.py）→ MIDI（compose.py）→ 带缓存渲染混音（render.py）
+│   ├── feel/                 一句话感觉 + 旋钮 → 编曲规格（spec.py）→ MIDI（compose.py）→ 带缓存渲染混音（render.py）；
+│   │                         图片 → 旋钮（image_spec.py，Pillow 规则映射，无 ML）
 │   └── web/app.py            网页界面后端（FastAPI，musician serve）
 ├── web/                      网页前端（index.html + style.css + app.js，无框架）
 ├── musician/                 `musician` 命令行入口（cli.py；musician serve；python -m musician.analyze）
@@ -348,7 +382,8 @@ samples/
 │   ├── run_pipeline.sh       一键运行
 │   ├── fetch_samples.sh      下载采样包
 │   ├── list_surge_presets.py 浏览 Surge 音色
-│   └── capture_surge_state.py 在 Surge 界面里挑音色并保存
+│   ├── capture_surge_state.py 在 Surge 界面里挑音色并保存
+│   └── smoke_image.py        图片 → 音乐冒烟测试（make smoke-image）
 └── midi/                     生成的 MIDI（已提交，方便直接拖进 DAW）
 ```
 
@@ -416,3 +451,6 @@ Output: `midi/analyze/*.mid`, `build/analyze/analysis.json`, `out/analyze.wav`.
 the narration script, adjust five knobs (mood, speed, density, brightness, voice priority), preview ~20 s in the
 browser, re-render tweaks (only parts whose MIDI changed are re-rendered), export the full track (WAV/MP3/MIDI).
 Backend: FastAPI over `src/feel` (text+knobs → ArrangementSpec → mido MIDI → existing renderers + mix).
+**Image → music**: upload an image (`POST /api/from-image`); `src/feel/image_spec.py` (Pillow, no ML) maps dominant
+hue → mood/brightness, luminance → brightness/speed bias, edge density → density, colour variance → energy
+(speed, and voice/duck), then the knobs stay editable for re-renders.

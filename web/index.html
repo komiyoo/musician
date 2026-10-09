@@ -10,7 +10,7 @@
 <main>
   <header>
     <h1>一句话生成配乐</h1>
-    <p class="sub">写下你想要的感觉，或直接贴口播稿。点「生成试听」听 20 秒，不满意就拖动下面的旋钮再渲一次。</p>
+    <p class="sub">写下你想要的感觉，或直接贴口播稿，或上传一张图片。点「生成试听」听 20 秒，不满意就拖动下面的旋钮再渲一次。</p>
   </header>
 
   <section class="card">
@@ -22,6 +22,23 @@
       <button class="chip" data-text="悬疑、紧张的数据安全解说，克制一点">悬疑紧张</button>
       <button class="chip" data-text="发布会片头，热血、宏大、节奏感强">发布会片头</button>
       <button class="chip" data-text="安静治愈的科普旁白，极简留白">安静科普</button>
+    </div>
+  </section>
+
+  <section class="card image" id="image-card">
+    <div class="image-row">
+      <div class="image-pick">
+        <span class="label">从图片生成</span>
+        <p class="hint">上传封面 / 截图 / 照片：按主色调、明暗、细节多少、色彩丰富度自动设好旋钮，之后仍可手动微调。</p>
+        <input type="file" id="image-file" accept="image/*" hidden>
+        <button id="btn-image" class="btn" type="button">上传图片</button>
+        <label class="draft inline"><input type="checkbox" id="image-auto" checked> 上传后自动生成试听</label>
+        <button id="btn-image-clear" class="link-btn" type="button" hidden>清除图片</button>
+      </div>
+      <figure class="thumb" id="image-thumb" hidden>
+        <img id="image-preview" alt="上传的图片">
+        <figcaption><span id="image-name"></span><span class="palette" id="image-palette"></span></figcaption>
+      </figure>
     </div>
   </section>
 

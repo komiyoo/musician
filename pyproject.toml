@@ -16,10 +16,11 @@ dependencies = [
   "soundfile>=0.12",
   "pedalboard>=0.9.8",
   "pyloudnorm>=0.1.1",
+  "pillow>=10.0",                 # image → music (src/feel/image_spec.py)
 ]
 
 [project.optional-dependencies]
-web = ["fastapi>=0.110", "uvicorn>=0.29"]
+web = ["fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]   # multipart = /api/from-image upload
 
 [project.scripts]
 musician = "musician.cli:main"

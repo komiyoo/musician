@@ -28,6 +28,8 @@ packaging==26.3
     # via mido
 pedalboard==0.9.26
     # via code-to-music
+pillow==12.3.0
+    # via code-to-music
 pycparser==3.11 ; implementation_name != 'PyPy'
     # via cffi
 pyloudnorm==0.2.0
