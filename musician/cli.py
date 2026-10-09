@@ -7,6 +7,8 @@ import sys
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    from src.envfile import load_env
+    load_env()                                 # local .env (gitignored) → os.environ; shell exports win
     ap = argparse.ArgumentParser(prog="musician", description="code-to-music: 用代码写音乐")
     sub = ap.add_subparsers(dest="cmd", required=True)
     from src.analyze.__main__ import build_parser

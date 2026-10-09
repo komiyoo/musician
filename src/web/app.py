@@ -21,7 +21,11 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from src import config as C
+from src.envfile import load_env
+
+load_env()  # noqa: E402 — local .env before reading CTM_* / API keys
+
+from src import config as C  # noqa: E402
 from src.feel import render as R
 from src.feel.spec import DEFAULT_KNOBS, VOICE_LABELS, build_spec, parse_feel
 

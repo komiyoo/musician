@@ -257,10 +257,22 @@ uv run musician serve --host 0.0.0.0    # 局域网里其他电脑也能打开
 之后**照常拖旋钮** → 「微调后再渲」（只重渲变化的声部，读图结果会一起带上），或「生成试听」（图片模式下保留旋钮，
 不会被文字覆盖；在感觉框里重新打字或点示例就回到文字模式）→ 满意了「导出完整轨」。
 
-**配置 API Key**（任选一种，设置后重启 `musician serve`）：
+**配置 API Key**（推荐用 `.env`，设置后重启 `musician serve`）：
 
 ```bash
-export OPENAI_API_KEY=sk-...                     # OpenAI（默认依次尝试 gpt-4o-mini → gpt-4.1-mini → gpt-4o → gpt-4.1）
+cp .env.example .env        # 然后编辑 .env，只填 OPENAI_API_KEY=你的key
+uv run musician serve       # 启动时自动读取 .env（python-dotenv；shell 里 export 的同名变量优先）
+```
+
+`.env.example` 默认：`OPENAI_BASE_URL=https://code.ticoag.fun/v1`、`CTM_VISION_MODEL=Qwen3.8-Flash-Next`。
+**`.env` 已加入 `.gitignore`，永远不要提交 `.env` 或把真实 key 写进任何会提交的文件。**
+不设 `CTM_VISION_MODEL` 时默认 `Qwen3.8-Flash-Next`；失败（404 等）依次退到 `qwen38-flash-next` → `deepseek-chat` →
+`gpt-4o-mini` …；会先查 `GET /v1/models`，把大小写 / 标点不同的写法（如 Qwen3.8-Flash-Next ↔ qwen38-flash-next）对上服务端的真实 id。
+
+也可以直接 export（任选一种）：
+
+```bash
+export OPENAI_API_KEY=sk-...  OPENAI_BASE_URL=https://code.ticoag.fun/v1   # 默认模型 Qwen3.8-Flash-Next
 # 或任何 OpenAI 兼容接口（OpenRouter / 通义千问 / 智谱 / 本地 vLLM …）：
 export OPENAI_API_KEY=...  OPENAI_BASE_URL=https://openrouter.ai/api/v1  CTM_VISION_MODEL=qwen/qwen2.5-vl-72b-instruct
 # 或 Anthropic Claude（默认依次尝试 claude-sonnet-4-5 → claude-haiku-4-5 → claude-3-5-sonnet-latest …）：
@@ -272,7 +284,7 @@ uv run musician serve
 
 - 模型不存在（404）/ 限流 / 5xx 时自动换下一个候选模型；Key 无效（401/403）或超时则直接退回颜色规则并说明原因。
 - **缓存**：按图片内容 SHA-256（+ 提示词版本）缓存在 `build/vision_cache/`，同一张图再次上传不再调用模型、不再计费。
-- 不新增依赖：只用 Python 标准库 `urllib` 调接口。
+- 调接口只用 Python 标准库 `urllib`；`.env` 由 `python-dotenv` 读取（没装时用内置简易解析，`CTM_NO_DOTENV=1` 可关闭）。
 
 **颜色规则（兜底 / ±10 修正）**：
 `src/feel/image_spec.py` 不用机器学习，用 Pillow 把图缩到 256 px，量 4 个直观特征，按固定规则换算成和

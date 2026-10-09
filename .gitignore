@@ -26,3 +26,7 @@ __pycache__/
 *.egg-info/
 # analyze mode output (regenerated per target repo; examples/ keeps a sample)
 midi/analyze/
+# secrets: local env files (copy .env.example → .env; never commit .env)
+.env
+.env.*
+!.env.example

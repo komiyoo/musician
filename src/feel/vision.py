@@ -16,7 +16,11 @@ suggested_duck（0/1/2 = 不抢/平衡/偏配乐）、narration_hint（口播语
   OPENAI_BASE_URL       可选，默认 https://api.openai.com/v1（兼容接口填它们的 /v1 地址）
   ANTHROPIC_API_KEY     Anthropic Claude
   ANTHROPIC_BASE_URL    可选，默认 https://api.anthropic.com
-  CTM_VISION_MODEL      可选，指定模型（逗号分隔可给多个，按顺序尝试）；不填则依次尝试常见看图模型
+  CTM_VISION_MODEL      可选，指定模型（逗号分隔可给多个，按顺序尝试）；不填默认 Qwen3.8-Flash-Next，
+                        之后依次退到 qwen38-flash-next → deepseek-chat → gpt-4o-mini …（模型 404 时换下一个）
+
+也可以把这些变量写进仓库根目录的 .env（cp .env.example .env；.env 已被 gitignore，切勿提交），
+启动时自动读取（装了 python-dotenv 就用它，否则内置简易解析；已在 shell 里 export 的变量优先）。
   CTM_VISION_PROVIDER   可选，openai / anthropic，强制用哪家
   CTM_VISION_TIMEOUT    可选，单次请求超时秒数，默认 45
 
@@ -38,10 +42,17 @@ import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from src.envfile import load_env
+
+load_env()
+
 PROMPT_VERSION = "v2"           # bump when the prompt / schema changes → invalidates the cache
 SEND_SIZE = 1024                # longest side of the JPEG sent to the model
 DEFAULT_TIMEOUT = 45.0
-OPENAI_MODELS = ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4.1"]
+DEFAULT_VISION_MODEL = "Qwen3.8-Flash-Next"   # used when CTM_VISION_MODEL is unset (OpenAI-compatible endpoint)
+# tried in order; unknown ids 404 → next one. Alias spellings are resolved against GET /models when possible.
+OPENAI_MODELS = [DEFAULT_VISION_MODEL, "qwen38-flash-next", "deepseek-chat",
+                 "gpt-4o-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4.1"]
 ANTHROPIC_MODELS = ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-3-5-sonnet-latest", "claude-3-5-haiku-latest"]
 CACHE_DIR = Path(os.environ.get("CTM_VISION_CACHE", Path(__file__).resolve().parents[2] / "build" / "vision_cache"))
 
@@ -264,9 +275,55 @@ NO_KEY_MSG = ("未配置视觉模型 API Key：请设置环境变量 OPENAI_API_
               "或 ANTHROPIC_API_KEY 后重启服务。本次已改用颜色规则（色相 / 明暗 / 细节）生成。")
 
 
+def _norm_id(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+_SERVER_MODELS: dict[str, list[str] | None] = {}
+
+
+def _server_models(timeout: float = 10.0) -> list[str] | None:
+    """GET {OPENAI_BASE_URL}/models (cached per base URL); None when unavailable."""
+    base = (_env("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
+    if base in _SERVER_MODELS:
+        return _SERVER_MODELS[base]
+    ids = None
+    try:
+        req = urllib.request.Request(base + "/models", headers={"Authorization": "Bearer " + _env("OPENAI_API_KEY")})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            ids = [m["id"] for m in json.load(r).get("data", []) if isinstance(m, dict) and m.get("id")]
+    except Exception:  # noqa: BLE001 — listing is best effort
+        ids = None
+    _SERVER_MODELS[base] = ids
+    return ids
+
+
+def _resolve_ids(models: list[str], server: list[str] | None) -> list[str]:
+    """Map candidates onto exact server ids (case / punctuation-insensitive, e.g. Qwen3.8-Flash-Next ↔
+    qwen38-flash-next); ids the server lists go first, the rest keep their order. Deduplicated."""
+    if not server:
+        return list(dict.fromkeys(models))
+    by_norm: dict[str, str] = {}
+    for sid in server:
+        by_norm.setdefault(_norm_id(sid), sid)
+    hit = [by_norm[_norm_id(m)] for m in models if _norm_id(m) in by_norm]
+    miss = [m for m in models if _norm_id(m) not in by_norm]
+    return list(dict.fromkeys(hit + miss))
+
+
+def _list_models() -> list[str] | None:
+    return MODEL_LISTER()
+
+
+MODEL_LISTER = _server_models   # tests monkeypatch this
+
+
 def _models(provider: str) -> list[str]:
     m = [x.strip() for x in _env("CTM_VISION_MODEL").split(",") if x.strip()]
-    return m or (OPENAI_MODELS if provider == "openai" else ANTHROPIC_MODELS)
+    if provider != "openai":
+        return m or ANTHROPIC_MODELS
+    m = m + [x for x in OPENAI_MODELS if x not in m]    # explicit choice first, default chain as fallback
+    return _resolve_ids(m, _list_models())
 
 
 def _jpeg_b64(data: bytes) -> str:

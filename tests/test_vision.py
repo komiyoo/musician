@@ -54,7 +54,8 @@ class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.patches = [mock.patch.object(V, "CACHE_DIR", Path(self.tmp.name)),
-                        mock.patch.dict(os.environ, {}, clear=False)]
+                        mock.patch.dict(os.environ, {}, clear=False),
+                        mock.patch.object(V, "MODEL_LISTER", lambda: None)]   # no network in tests
         for p in self.patches:
             p.start()
         for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CTM_VISION_MODEL", "CTM_VISION_PROVIDER", "OPENAI_BASE_URL"):
@@ -137,15 +138,15 @@ class VisionPathTests(Base):
 
         def fake(url, payload, headers, timeout):
             calls.append((url, payload["model"]))
-            if payload["model"] == "gpt-4o-mini":
-                raise V.HTTPFail(404, '{"error":{"message":"The model `gpt-4o-mini` does not exist"}}')
+            if payload["model"] == "Qwen3.8-Flash-Next":
+                raise V.HTTPFail(404, '{"error":{"message":"The model `Qwen3.8-Flash-Next` does not exist"}}')
             img = payload["messages"][0]["content"][1]["image_url"]["url"]
             assert img.startswith("data:image/jpeg;base64,")
             return openai_reply(GOOD)
 
         with mock.patch.object(V, "HTTP_POST", side_effect=fake):
             s = IS.suggest_from_image(png())
-        self.assertEqual([m for _, m in calls], ["gpt-4o-mini", "gpt-4.1-mini"])
+        self.assertEqual([m for _, m in calls], ["Qwen3.8-Flash-Next", "qwen38-flash-next"])
         self.assertTrue(calls[0][0].endswith("/chat/completions"))
         self.assertEqual(s.source, "vision")
         self.assertEqual(len(s.vision["angles"]), 6)
@@ -210,6 +211,54 @@ class VisionPathTests(Base):
         with mock.patch.object(V, "HTTP_POST", side_effect=fake2):
             self.assertEqual(IS.suggest_from_image(png()).source, "vision")
         self.assertEqual(len(seen), 2)
+
+    def test_default_model_qwen_then_fallbacks(self):
+        os.environ["OPENAI_API_KEY"] = "sk"
+        ms = V._models("openai")
+        self.assertEqual(ms[0], "Qwen3.8-Flash-Next")
+        self.assertIn("deepseek-chat", ms)
+        os.environ["CTM_VISION_MODEL"] = "my-model"
+        ms = V._models("openai")
+        self.assertEqual(ms[0], "my-model")
+        self.assertEqual(ms[1], "Qwen3.8-Flash-Next")      # default chain kept as fallback
+        self.assertIn("deepseek-chat", ms)
+
+    def test_model_alias_resolved_against_server_list(self):
+        os.environ["OPENAI_API_KEY"] = "sk"
+        with mock.patch.object(V, "MODEL_LISTER", lambda: ["qwen38-flash-next", "DeepSeek-Chat"]):
+            ms = V._models("openai")
+        self.assertEqual(ms[:2], ["qwen38-flash-next", "DeepSeek-Chat"])
+        self.assertEqual(len(ms), len(set(ms)))
+
+    def test_qwen_404_falls_back(self):
+        os.environ["OPENAI_API_KEY"] = "sk"
+        tried = []
+
+        def fake(url, payload, headers, timeout):
+            tried.append(payload["model"])
+            if payload["model"] != "deepseek-chat":
+                raise V.HTTPFail(404, "model not found")
+            return openai_reply(json.dumps(GOOD, ensure_ascii=False))
+
+        with mock.patch.object(V, "HTTP_POST", side_effect=fake):
+            r = V.interpret_image(png(), use_cache=False)
+        self.assertEqual(r.model, "deepseek-chat")
+        self.assertEqual(tried[0], "Qwen3.8-Flash-Next")
+
+    def test_dotenv_loader_does_not_override(self):
+        from src import envfile
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / ".env"
+            f.write_text("# c\nexport CTM_T1='a b'\nCTM_T2=x # note\nCTM_T3=keep\n", "utf-8")
+            os.environ["CTM_T3"] = "shell"
+            try:
+                self.assertEqual(envfile.load_env(f), f)
+                self.assertEqual(os.environ["CTM_T1"], "a b")
+                self.assertEqual(os.environ["CTM_T2"], "x")
+                self.assertEqual(os.environ["CTM_T3"], "shell")
+            finally:
+                for k in ("CTM_T1", "CTM_T2", "CTM_T3"):
+                    os.environ.pop(k, None)
 
     def test_garbage_from_all_models(self):
         os.environ["OPENAI_API_KEY"] = "sk"

@@ -34,6 +34,8 @@ pycparser==3.11 ; implementation_name != 'PyPy'
     # via cffi
 pyloudnorm==0.2.0
     # via code-to-music
+python-dotenv==1.2.4
+    # via code-to-music
 scipy==1.15.3 ; python_full_version < '3.11'
     # via
     #   code-to-music

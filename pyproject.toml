@@ -17,6 +17,7 @@ dependencies = [
   "pedalboard>=0.9.8",
   "pyloudnorm>=0.1.1",
   "pillow>=10.0",                 # image → music (src/feel/image_spec.py)
+  "python-dotenv>=1.0",           # load local .env (API keys; never committed) — src/envfile.py
 ]
 
 [project.optional-dependencies]
