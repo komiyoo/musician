@@ -2,7 +2,7 @@
 # 一键运行：作曲 -> 渲染 -> 混音。  Usage: scripts/run_pipeline.sh [--fallback] [--voice narration.wav] [--out out/final.wav]
 set -euo pipefail
 cd "$(dirname "$0")/.."
-PY="${PYTHON:-python3}"
+PY="${PYTHON:-$([ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)}"   # uv sync 建的 .venv 优先
 RENDER_ARGS=(); MIX_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in

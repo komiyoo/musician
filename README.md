@@ -27,14 +27,22 @@ src/score/write_score.py  ──►  midi/full.mid + midi/<part>.mid  (+ build/s
 
 ## 快速开始（不装任何采样也能出声）
 
-```bash
-git clone <this repo> && cd code-to-music
-python3 -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
+依赖用 [uv](https://docs.astral.sh/uv/) 管理：`pyproject.toml` 是唯一来源，`uv.lock` 锁定版本（已提交）。
 
-scripts/run_pipeline.sh            # 或: make all
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # 没装 uv 时（macOS 也可 brew install uv）
+git clone <this repo> && cd code-to-music
+uv sync --extra web                # 建 .venv，按 uv.lock 安装依赖 + 本项目（含 `musician` 命令、网页界面依赖）；或: make sync
+                                   # 只要命令行、不要网页界面：uv sync
+
+uv run musician all                # 作曲 → 渲染 → 混音；或: uv run make all  /  uv run scripts/run_pipeline.sh
 # -> midi/*.mid, build/stems/*.wav, out/final.wav, out/final.mp3, out/final.report.json
 ```
+
+- `uv run <命令>` 会自动保持 .venv 与 uv.lock 同步，无需手动 activate；也可以 `. .venv/bin/activate` 后直接用 `musician` / `make`。
+- 改依赖：编辑 `pyproject.toml`（或 `uv add 包名` / `uv add --optional web 包名`）→ `uv lock` → `make requirements`。
+- 不用 uv？`requirements.txt` / `requirements-web.txt` 由 uv.lock 导出（`make requirements`），仍可
+  `python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt && pip install -e .`。
 
 没有 Surge XT / sfizz / 采样包时，第 2 步会自动退回到 `src/render/fallback_synth.py`（numpy 写的简易合成器），
 **音符、渐慢、力度抖动、弦乐渐强渐弱和正式版完全一样**，只是音色是草稿级别——足够在剪辑软件里先对画面、对口播节奏。
@@ -42,11 +50,11 @@ scripts/run_pipeline.sh            # 或: make all
 分步运行：
 
 ```bash
-python -m src.score.write_score        # 1. 作曲 → MIDI
-python -m src.render.render_all        # 2. 渲染每个声部（自动选择 Surge/sfizz/兜底）
-python -m src.render.render_all --fallback   #    强制全部用兜底合成器
-python -m src.mix.mix                  # 3+4. 响度对齐 + 效果 + 母带 → out/final.wav
-python -m src.mix.mix --voice 口播.wav  #    可选：按口播音量自动压低配乐（ducking）
+uv run musician score                  # 1. 作曲 → MIDI          （= uv run python -m src.score.write_score / make score）
+uv run musician render                 # 2. 渲染每个声部（自动选择 Surge/sfizz/兜底）（= python -m src.render.render_all）
+uv run musician render --fallback      #    强制全部用兜底合成器  （= make render-fallback）
+uv run musician mix                    # 3+4. 响度对齐 + 效果 + 母带 → out/final.wav（= python -m src.mix.mix）
+uv run musician mix --voice 口播.wav    #    可选：按口播音量自动压低配乐（ducking）
 ```
 
 ## 四步流程 与 口播铺底 的对应关系
@@ -93,14 +101,14 @@ analyze 层只负责「代码 → 音符事件」，后面完全复用已有的 
 ### 运行
 
 ```bash
-pip install -e .                                   # 安装 `musician` 命令（或直接用 python -m）
+uv sync                                            # 安装依赖 + `musician` 命令（之后用 uv run musician …；或 activate .venv 后直接 musician …）
 
 musician analyze /path/to/repo                     # 整个仓库 → out/analyze.wav
 musician analyze --diff /path/to/repo              # 未提交改动 vs HEAD（干净时用 HEAD~1..HEAD）→ out/analyze_diff.wav
 musician analyze --diff --rev v1.0..main /path/to/repo   # 指定范围；--rev <commit> = 该提交相对父提交
 python -m musician.analyze src                     # 等价写法：分析本项目自己的 src/
-make analyze REPO=../my-project                    # Makefile 快捷方式（另有 make analyze-diff，默认带 --heat）
-make demo-analyze                                  # 演示：分析本项目 src/ → out/analyze.wav (+ .mp3) + out/analysis.json
+uv run make analyze REPO=../my-project             # Makefile 快捷方式（另有 make analyze-diff，默认带 --heat）
+uv run make demo-analyze                           # 演示：分析本项目 src/ → out/analyze.wav (+ .mp3) + out/analysis.json
 
 # 常用选项
 --midi-only     只写 MIDI + analysis.json，不渲染
@@ -186,14 +194,14 @@ t = 0.45 · clamp((圈复杂度 − 2) / 10)      # 复杂度 2 → 0，12 → 1
 ### 运行
 
 ```bash
-pip install -r requirements-web.txt     # 多装 fastapi + uvicorn（或 pip install -e '.[web]'；也可 make web-deps）
+uv sync --extra web                     # 多装 fastapi + uvicorn（= make sync / make web-deps；pip 用户: pip install -r requirements-web.txt）
 
-musician serve                          # 或: make web   或: python -m src.web.app
+uv run musician serve                   # 或: uv run make web   或: uv run python -m src.web.app
 # 浏览器打开 http://127.0.0.1:8765/
 
-musician serve --fallback               # 没装 Surge XT / sfizz / 采样包？全部用兜底合成器（最快，草稿音色）
-make web PORT=9000 FALLBACK=1           # Makefile 写法
-musician serve --host 0.0.0.0           # 局域网里其他电脑也能打开
+uv run musician serve --fallback        # 没装 Surge XT / sfizz / 采样包？全部用兜底合成器（最快，草稿音色）
+uv run make web PORT=9000 FALLBACK=1    # Makefile 写法
+uv run musician serve --host 0.0.0.0    # 局域网里其他电脑也能打开
 ```
 
 ### 怎么用
@@ -307,7 +315,8 @@ samples/
 
 ```
 ├── README.md                 本文件
-├── requirements.txt / pyproject.toml / Makefile
+├── pyproject.toml / uv.lock  依赖唯一来源 + 锁文件（uv）；requirements*.txt 由 uv.lock 导出
+├── Makefile
 ├── src/
 │   ├── config.py             路径、曲式、速度表、声部、响度目标、采样包位置
 │   ├── score/write_score.py  作曲：22 小节全部音符 → midi/*.mid
@@ -388,6 +397,9 @@ bass/drums −25, pad/arp −29 LUFS); (4) per-track pedalboard FX with a 1.5–
 master to −18 LUFS. Without Surge/sfizz/samples, a numpy fallback synth renders the same MIDI, so
 `scripts/run_pipeline.sh` always produces `out/final.wav`. Sample packs are not committed — run
 `scripts/fetch_samples.sh`.
+Dependencies are managed with **uv** (`pyproject.toml` + committed `uv.lock`): `uv sync --extra web`, then
+`uv run musician all` / `uv run musician serve` / `uv run make web`; `requirements*.txt` are exported from the lock
+(`make requirements`) for pip users.
 
 **New: `musician analyze <repo>`** maps real code structure to MIDI and feeds the same render → mix
 pipeline (D minor, 100 BPM): files → sections, functions → piano motifs, nesting depth → register,

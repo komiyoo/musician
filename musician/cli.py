@@ -1,4 +1,4 @@
-"""`musician` console script (installed via `pip install -e .`)."""
+"""`musician` console script (installed by `uv sync`, or `pip install -e .`)."""
 from __future__ import annotations
 
 import argparse

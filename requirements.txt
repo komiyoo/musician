@@ -1,6 +1,50 @@
-mido>=1.3
-numpy>=1.26
-scipy>=1.11
-soundfile>=0.12
-pedalboard>=0.9.8
-pyloudnorm>=0.1.1
+# 由 uv.lock 自动生成（make requirements），供不用 uv 的 pip 用户；请改 pyproject.toml，不要手改本文件。
+cffi==2.1.1
+    # via soundfile
+mido==1.3.3
+    # via code-to-music
+numpy==2.2.6 ; python_full_version < '3.11'
+    # via
+    #   code-to-music
+    #   pedalboard
+    #   pyloudnorm
+    #   scipy
+    #   soundfile
+numpy==2.4.6 ; python_full_version == '3.11.*'
+    # via
+    #   code-to-music
+    #   pedalboard
+    #   pyloudnorm
+    #   scipy
+    #   soundfile
+numpy==2.5.3 ; python_full_version >= '3.12'
+    # via
+    #   code-to-music
+    #   pedalboard
+    #   pyloudnorm
+    #   scipy
+    #   soundfile
+packaging==26.3
+    # via mido
+pedalboard==0.9.26
+    # via code-to-music
+pycparser==3.11 ; implementation_name != 'PyPy'
+    # via cffi
+pyloudnorm==0.2.0
+    # via code-to-music
+scipy==1.15.3 ; python_full_version < '3.11'
+    # via
+    #   code-to-music
+    #   pyloudnorm
+scipy==1.17.1 ; python_full_version == '3.11.*'
+    # via
+    #   code-to-music
+    #   pyloudnorm
+scipy==1.18.1 ; python_full_version >= '3.12'
+    # via
+    #   code-to-music
+    #   pyloudnorm
+soundfile==0.14.0
+    # via code-to-music
+typing-extensions==4.16.0
+    # via soundfile

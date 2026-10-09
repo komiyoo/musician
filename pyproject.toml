@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "code-to-music"
 version = "0.3.0"
@@ -19,6 +23,11 @@ web = ["fastapi>=0.110", "uvicorn>=0.29"]
 
 [project.scripts]
 musician = "musician.cli:main"
+
+# uv: `uv sync` installs the project (editable) + deps from uv.lock; `uv sync --extra web` adds FastAPI/uvicorn.
+# requirements*.txt are generated from uv.lock (`make requirements`) for plain-pip users — edit deps here, not there.
+[tool.uv]
+package = true
 
 [tool.setuptools]
 packages = ["src", "src.score", "src.render", "src.mix", "src.analyze", "src.feel", "src.web", "musician"]
