@@ -1,0 +1,26 @@
+// ======================================================================
+// piano.sfz — override layer for Salamander Grand Piano V3 (SFZ+FLAC)
+// 钢琴：Salamander 采样 + 我们自己的起音 / 滤波 / 力度曲线
+//
+// src/render/sfz_prepare.py merges these opcodes into the pack's mapping
+// (samples/SalamanderGrandPiano*/...sfz) and writes build/sfz/piano.sfz.
+// Every opcode below REPLACES the same opcode anywhere in the pack.
+// ======================================================================
+<global>
+// Attack: hammer transient softened from ~1 ms to 12 ms so the eighth-note
+// arpeggio sits behind the narration. Push toward 0.28 for a pad-like piano.
+ampeg_attack=0.012
+ampeg_release=0.9
+
+// Darker tone; opens up with velocity (cents per full velocity)
+fil_type=lpf_2p
+cutoff=5200
+fil_veltrack=2400
+resonance=0
+
+// Velocity curve: gentle — avoids sudden loud notes under voice-over
+amp_veltrack=90
+amp_velcurve_1=0.02
+amp_velcurve_48=0.22
+amp_velcurve_96=0.62
+amp_velcurve_127=1.0

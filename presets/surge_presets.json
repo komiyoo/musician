@@ -1,0 +1,18 @@
+{
+  "_comment": "Surge XT patch choice per part. 'patch' is relative to the Surge XT factory patch folder (patches_factory) or an absolute .fxp path. 'alternatives' are good candidates to audition. See presets/README.md.",
+  "pad": {
+    "patch": "Pads/MKS-70 Warm Pad.fxp",
+    "alternatives": ["Pads/Still.fxp", "Pads/Distant.fxp", "Pads/Pad 3.fxp", "Pads/Winter Warmer.fxp"],
+    "gain_db": 0.0
+  },
+  "arp": {
+    "patch": "Plucks/Nice Pluck 2.fxp",
+    "alternatives": ["Plucks/Soift.fxp", "Plucks/Clean.fxp", "Plucks/Light 1.fxp", "Plucks/Magic Music Box.fxp"],
+    "gain_db": 0.0
+  },
+  "bass": {
+    "patch": "Basses/Sub 1.fxp",
+    "alternatives": ["Basses/Mellow.fxp", "Basses/Smoothie.fxp", "Basses/Deep End.fxp"],
+    "gain_db": 0.0
+  }
+}

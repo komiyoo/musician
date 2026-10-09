@@ -1,0 +1,24 @@
+// Shared string-section opcodes (VSCO-2 CE sustain/vibrato samples).
+// Included by violin.sfz / viola.sfz / cello.sfz.
+<global>
+// Bow attack softened from ~1 ms to 0.28 s: strings swell in, never "bite".
+ampeg_attack=0.28
+ampeg_decay=0.4
+ampeg_sustain=92
+ampeg_release=0.65
+
+// CC11 (expression) drives the crescendo-in / diminuendo-out hairpins that
+// src/score/write_score.py writes into midi/<part>.mid.
+amplitude_oncc11=100
+
+// Velocity -> brightness + level
+fil_type=lpf_2p
+cutoff=4200
+fil_veltrack=1800
+amp_veltrack=70
+amp_velcurve_1=0.08
+amp_velcurve_64=0.45
+amp_velcurve_127=1.0
+
+// VSCO sustain samples are not looped: keep the note playing to the end
+loop_mode=no_loop

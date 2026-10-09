@@ -1,0 +1,6 @@
+// viola.sfz — 中提琴 — 内声部 (viola inner voices), VSCO-2 CE samples
+// Regions are generated from the WAV file names by src/render/sfz_prepare.py.
+#include "strings_common.sfz"
+<global>
+// per-instrument tweaks (these win over strings_common)
+cutoff=3600

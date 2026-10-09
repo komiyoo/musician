@@ -1,0 +1,26 @@
+# audio renders
+*.wav
+*.flac
+*.aif
+*.aiff
+*.mp3
+*.ogg
+# sample packs / soundfonts (large; download with scripts/fetch_samples.sh)
+samples/
+*.sf2
+*.sf3
+*.tar.gz
+*.tar.xz
+*.7z
+# Surge XT / plugin preset binaries
+*.fxp
+*.vstpreset
+presets/*.state
+# build artifacts
+build/
+out/
+# python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/

@@ -1,0 +1,7 @@
+// cello.sfz — 大提琴 — 根音 (cello roots), VSCO-2 CE samples
+// Regions are generated from the WAV file names by src/render/sfz_prepare.py.
+#include "strings_common.sfz"
+<global>
+// per-instrument tweaks (these win over strings_common)
+cutoff=2800
+ampeg_release=0.9

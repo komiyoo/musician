@@ -1,0 +1,18 @@
+// ======================================================================
+// drums.sfz — override layer for Sam's Sonor (sfzinstruments/SamsSonor)
+// 鼓：kick 36 / rim 37 / snare 38 / closed hi-hat 42 (GM map, same as the pack)
+// ======================================================================
+<global>
+// Drums keep a near-instant attack (~1 ms) — the transient IS the groove.
+ampeg_attack=0.001
+ampeg_release=0.25
+
+// Softer velocity curve: hats at vel 50-64 stay in the background
+amp_veltrack=100
+amp_velcurve_1=0.01
+amp_velcurve_64=0.30
+amp_velcurve_127=1.0
+
+// Take a little top off the kit so it doesn't fight sibilance in the voice
+fil_type=lpf_2p
+cutoff=9000
