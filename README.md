@@ -72,6 +72,74 @@ python -m src.mix.mix --voice 口播.wav  #    可选：按口播音量自动压
 
 ---
 
+## 新模式：`musician analyze` —— 让代码自己作曲
+
+除了手写的 22 小节铺底，现在还可以把**任意代码仓库的真实结构**变成音乐（思路参考 repo2music），
+或者把一次 **git diff 的变更块**变成一串短动机（思路参考 CodeSonify）。
+analyze 层只负责「代码 → 音符事件」，后面完全复用已有的 **render → mix** 流水线：
+同样的 D 小调、100 BPM、同样的声部名 / 响度目标 / 效果链，结尾同样是 A → Dm 终止 + 渐慢。
+
+```
+<repo> ──► src/analyze/metrics.py   Python AST（+ 简易 JS/TS 扫描）：嵌套深度、圈复杂度、import、
+                │                    注释率、控制流密度、重复片段（跨文件相同的 3 行窗口）
+                ▼
+        src/analyze/mapping.py      指标 → 音符事件（复用 write_score 的 Score / 和弦 / pad 排列）
+                ▼
+        midi/analyze/<part>.mid + full.mid   build/analyze/analysis.json（指标 + 每段映射）
+                ▼   复用 render_all（Surge XT / sfizz / numpy 兜底）+ mix（响度对齐 + 效果 + 母带）
+        out/analyze.wav (+ .mp3, .report.json)
+```
+
+### 运行
+
+```bash
+pip install -e .                                   # 安装 `musician` 命令（或直接用 python -m）
+
+musician analyze /path/to/repo                     # 整个仓库 → out/analyze.wav
+musician analyze --diff /path/to/repo              # 未提交改动 vs HEAD（干净时用 HEAD~1..HEAD）→ out/analyze_diff.wav
+musician analyze --diff --rev v1.0..main /path/to/repo   # 指定范围；--rev <commit> = 该提交相对父提交
+python -m musician.analyze src                     # 等价写法：分析本项目自己的 src/
+make analyze REPO=../my-project                    # Makefile 快捷方式（另有 make analyze-diff）
+
+# 常用选项
+--midi-only     只写 MIDI + analysis.json，不渲染
+--fallback      强制 numpy 兜底合成器（不装 Surge/sfizz 也能出声）
+--max-bars N    长度上限（默认整仓 48 小节 / diff 32 小节；100 BPM 下每小节 2.4 秒）
+--no-js         只分析 .py
+--voice 口播.wav 和主流程一样按口播自动避让
+```
+
+输出位置与主流程互不干扰：`midi/analyze/`、`midi/analyze/diff/`、`build/analyze/`、`out/analyze*.wav`。
+`midi/*.mid`、`out/final.wav` 不会被覆盖。`midi/analyze/` 已加入 `.gitignore`；
+`examples/analyze_self.mid` 是分析本项目 `src/` 得到的示例。
+
+### 映射规则（整仓模式）
+
+| 代码指标 | 音乐参数 | 听感 |
+|---|---|---|
+| 文件 | 一个段落，1–4 小节（∝ 非空行数），按路径顺序演奏；第 1 小节是只有 pad 的引子 | 大文件 = 长段落 |
+| 函数 | 该文件段落里的一个**钢琴动机**，时间槽 ∝ 函数行数，起音从当前和弦音中按函数名哈希选取 | 每个函数有自己的「签名旋律」 |
+| **嵌套深度** | 动机的**音区**：0 层 A3 → 1 层 D4 → 2 层 G4 → 3 层 C5 → ≥4 层 E5；力度随深度增加 | 嵌套越深越高越紧 |
+| **圈复杂度** | 动机音符数（1 + (cx−1)/2，最多 8）；琶音**节奏密度**（cx<3 四分 / <6 八分 / ≥6 十六分）；cx≥6 段落加入 Gm、cx≥10 加入属和弦 A，且动机里插入半音摩擦、琶音每 4 个音换成小二度/三全音 | 复杂代码 = 更密、更不协和 |
+| **import** | 段落开头的打击乐：标准库 → 边击（rim），第三方 → 底鼓，本地/相对导入 → 军鼓，八分音符排开 | 依赖多 = 开头一串鼓点 |
+| **控制流密度**（每 10 行的 if/for/while/try/with/match 数） | 踩镲细分（无 / 四分 / 八分 / 十六分）+ 贝斯律动（全音符 / 二分 / 推进型） | 分支越多律动越碎 |
+| **注释率**（注释 + docstring 行 / 非空行） | pad 的**力度**和**亮度**（CC74；兜底合成器里映射为 pad 低通截止 500–3800 Hz） | 文档写得好，和声更亮更饱满 |
+| **重复片段**（同一 3 行窗口在仓库中出现多次） | 含重复的函数，其动机由小提琴高八度**卡农回声**；重复率 >5% 的文件段落以 Asus 结尾 | 复制粘贴 = 回声 |
+| 类定义 | 大提琴持续根音 | |
+| 语法错误 | 整段属和弦 + 不协和琶音 | |
+
+### 映射规则（diff 模式）
+
+- 每个变更块（hunk）→ ½ 小节（≤8 行）或 1 小节（>8 行）的短动机，按 diff 顺序排列；
+- **新增行上行**：`.py` 用钢琴、`.js/.ts` 用琶音合成器、`.md/.txt` 用小提琴；音高步进来自该行文本的哈希，力度来自行长；
+- **删除行下行**：大提琴低音区；删除多于新增的小节换成 Gm；
+- 每进入一个新文件敲一下底鼓，每个 hunk 一下踩镲，改动涉及 `import` 时加边击；
+- 超过 `--max-bars` 的 hunk 会被截掉并在终端提示。
+
+> JS/TS 分析是无依赖的启发式扫描（去掉字符串/注释后数花括号和关键字），Python 分析用标准库 `ast` + `tokenize`，结果精确。
+
+---
+
 ## 完整渲染（正式音色）
 
 ### 1) Surge XT（pad / arp / bass）
@@ -155,10 +223,17 @@ samples/
 │   │   ├── fallback_synth.py numpy 兜底合成器
 │   │   ├── midi_io.py        MIDI 读取 / stem 写出
 │   │   └── render_all.py     渲染全部声部
-│   └── mix/
-│       ├── loudness.py       pyloudnorm 每轨响度对齐（LUFS 或 RMS dBFS）
-│       ├── fx.py             每轨 pedalboard 效果链 + 母带限幅
-│       └── mix.py            总混 → out/final.wav
+│   ├── mix/
+│   │   ├── loudness.py       pyloudnorm 每轨响度对齐（LUFS 或 RMS dBFS）
+│   │   ├── fx.py             每轨 pedalboard 效果链 + 母带限幅
+│   │   └── mix.py            总混 → out/final.wav
+│   └── analyze/              代码 → 音乐（musician analyze）
+│       ├── metrics.py        Python AST / JS 启发式指标 + 重复片段检测
+│       ├── diffscan.py       git diff → hunk
+│       ├── mapping.py        指标 / hunk → 音符事件
+│       └── pipeline.py       写 midi/analyze → render → mix → out/analyze.wav
+├── musician/                 `musician` 命令行入口（cli.py；python -m musician.analyze）
+├── examples/analyze_self.mid 分析本项目 src/ 生成的示例 MIDI
 ├── instruments/*.sfz         SFZ 覆盖层（起音/滤波/力度曲线）
 ├── presets/                  Surge XT 音色选择（surge_presets.json + 说明）
 ├── scripts/
@@ -214,3 +289,11 @@ bass/drums −25, pad/arp −29 LUFS); (4) per-track pedalboard FX with a 1.5–
 master to −18 LUFS. Without Surge/sfizz/samples, a numpy fallback synth renders the same MIDI, so
 `scripts/run_pipeline.sh` always produces `out/final.wav`. Sample packs are not committed — run
 `scripts/fetch_samples.sh`.
+
+**New: `musician analyze <repo>`** maps real code structure to MIDI and feeds the same render → mix
+pipeline (D minor, 100 BPM): files → sections, functions → piano motifs, nesting depth → register,
+cyclomatic complexity → motif length / arp density / harmonic tension, imports → percussion
+(stdlib rim, third-party kick, local snare), control-flow density → hi-hat subdivision, comment ratio →
+pad velocity & brightness (CC74), repeated snippets → violin canon echo. `musician analyze --diff <repo>`
+turns git diff hunks into short motifs (added lines ascend, removed lines descend on cello).
+Output: `midi/analyze/*.mid`, `build/analyze/analysis.json`, `out/analyze.wav`.

@@ -1,6 +1,6 @@
 [project]
 name = "code-to-music"
-version = "0.1.0"
+version = "0.2.0"
 description = "代码生成配乐：D 小调科技解说视频铺底音乐 (score → MIDI → Surge XT / sfizz → pedalboard mix)"
 readme = "README.md"
 license = { text = "MIT" }
@@ -14,5 +14,8 @@ dependencies = [
   "pyloudnorm>=0.1.1",
 ]
 
+[project.scripts]
+musician = "musician.cli:main"
+
 [tool.setuptools]
-packages = ["src", "src.score", "src.render", "src.mix"]
+packages = ["src", "src.score", "src.render", "src.mix", "src.analyze", "musician"]

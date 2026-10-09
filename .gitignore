@@ -24,3 +24,5 @@ __pycache__/
 *.pyc
 .venv/
 *.egg-info/
+# analyze mode output (regenerated per target repo; examples/ keeps a sample)
+midi/analyze/

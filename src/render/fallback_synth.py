@@ -69,6 +69,7 @@ def render_part(part: str, sr: int = SR) -> np.ndarray:
     L = np.zeros(N + sr * 4)
     R = np.zeros(N + sr * 4)
     rng = np.random.default_rng(C.SEED + zlib.crc32(part.encode()) % 1000)
+    bright = sorted((t, v) for t, c, v in ccs if c == 74)   # CC74 brightness (analyze mode)
 
     for i, nt in enumerate(notes):
         s0 = int(nt.t_on * sr)
@@ -79,7 +80,9 @@ def render_part(part: str, sr: int = SR) -> np.ndarray:
         if part == "pad":
             n = hold + int(1.4 * sr)
             sig = additive(f0, n, sr, SAW[:10], (-7, 0, 7), rng)
-            sig = one_pole_lp(sig, 1400, sr)
+            cc74 = next((v for t, v in reversed(bright) if t <= nt.t_on + 1e-6), None)
+            cutoff = 1400 if cc74 is None else 500 + 3300 * cc74 / 127
+            sig = one_pole_lp(sig, cutoff, sr)
             env = adsr(n, sr, 0.9, 0.5, 0.85, 1.2, hold)
             pan = 0.35 + 0.3 * ((nt.pitch % 5) / 4)
         elif part == "piano":
