@@ -178,6 +178,64 @@ t = 0.45 · clamp((圈复杂度 − 2) / 10)      # 复杂度 2 → 0，12 → 1
 
 ---
 
+## 网页界面：一句话生成配乐（不需要懂音乐）
+
+给剪辑师 / 写稿人用的最小界面：写一句「感觉」或贴口播稿，拖几个旋钮，浏览器里直接试听，满意了导出完整轨。
+全程不需要知道和弦、MIDI 是什么。
+
+### 运行
+
+```bash
+pip install -r requirements-web.txt     # 多装 fastapi + uvicorn（或 pip install -e '.[web]'；也可 make web-deps）
+
+musician serve                          # 或: make web   或: python -m src.web.app
+# 浏览器打开 http://127.0.0.1:8765/
+
+musician serve --fallback               # 没装 Surge XT / sfizz / 采样包？全部用兜底合成器（最快，草稿音色）
+make web PORT=9000 FALLBACK=1           # Makefile 写法
+musician serve --host 0.0.0.0           # 局域网里其他电脑也能打开
+```
+
+### 怎么用
+
+1. **感觉 / 口播稿**：比如「科技解说，有点悬疑但不要太吓人，给口播让位」。也可以直接贴整段口播稿——
+   导出时会按字数（约 4.5 字/秒）估算时长；短描述默认导出 ≈58 秒。
+2. **生成试听**：根据文字自动摆好旋钮（页面上会写出识别到了哪些词），渲染约 20 秒的试听并自动播放。
+3. **旋钮**（不用懂乐理）：
+
+   | 旋钮 | 往左 → 往右 | 实际改了什么 |
+   |---|---|---|
+   | 情绪 | 暗 → 亮 | 和弦走向：暗 = 小调带属和弦张力；中 = 原版科技循环；亮 = 关系大调（F 大调） |
+   | 速度 | 慢 → 快 | 72 → 132 拍/分（中间 = 原版 100）；结尾自动渐慢 |
+   | 密度 | 疏 → 密 | 用几个声部、多密：只有铺底 + 钢琴 → 加大提琴/中提琴/旋律/贝斯 → 加琶音 → 加轻鼓 |
+   | 亮度 | 暗 → 亮 | 铺底音色的明暗（滤波）、琶音高低、整体高频 ±3 dB |
+   | 是否抢口播 | 不抢 / 平衡 / 偏配乐 | 整体响度 −21 / −18 / −15 LUFS；「不抢」去掉主旋律、在人声频段多让 3 dB |
+
+4. **微调后再渲**：保持你拖好的旋钮重新渲试听。只有内容变了的声部才重新渲染，其余直接用缓存
+   （例如只改「是否抢口播」时通常 1 秒内完成；改速度会让所有声部重渲）。
+5. **导出完整轨**：同一组旋钮渲染完整长度，可下载 WAV（剪辑用）/ MP3，以及给音乐人的 MIDI 工程文件。
+6. 生成后可以展开「编曲规格 JSON」看具体用了什么速度、段落、声部——只是说明，不看也能用。
+7. 「草稿音色」勾选后用 numpy 兜底合成器，最快；不勾选则自动使用已安装的 Surge XT / sfizz + 采样包。
+
+### 背后的流程
+
+```
+文字 + 旋钮 ──► src/feel/spec.py     ArrangementSpec（默认 D 小调；速度→BPM；段落 引入/展开/收束；
+                                      密度→声部；亮度→pad/琶音；是否抢口播→duck_for_voice + 响度）
+           ──► src/feel/compose.py  按规格写音符（复用 write_score 的和弦 / pad 排列 / mido 多轨 MIDI）
+           ──► src/feel/render.py   复用 render_all 的渲染器（Surge / sfizz / 兜底，按声部并行），
+                                      按「声部 MIDI 内容哈希」缓存 stem 和效果后 stem → 复用 mix 的响度对齐 + 效果 + 限幅
+           ──► out/web/preview-*.wav|mp3（≈20 秒） / out/web/full-*.wav|mp3|mid（完整轨）
+```
+
+- 网页后端：`src/web/app.py`（FastAPI）；前端：`web/index.html` + `style.css` + `app.js`（无框架）。
+- 接口：`POST /api/generate {"feel": "...", "knobs": {...} 或 null, "full": false, "fallback": false}`，
+  `POST /api/parse {"feel": "..."}`（只返回建议旋钮），`GET /media/<文件名>`。
+- 命令行同款：`python -m src.feel.render "轻松温暖的产品介绍" [--full] [--fallback] [--speed 70 ...]`。
+- 缓存在 `build/feel/`，输出在 `out/web/`（都在 .gitignore 里，可随时删除）。
+
+---
+
 ## 完整渲染（正式音色）
 
 ### 1) Surge XT（pad / arp / bass）
@@ -265,12 +323,15 @@ samples/
 │   │   ├── loudness.py       pyloudnorm 每轨响度对齐（LUFS 或 RMS dBFS）
 │   │   ├── fx.py             每轨 pedalboard 效果链 + 母带限幅
 │   │   └── mix.py            总混 → out/final.wav
-│   └── analyze/              代码 → 音乐（musician analyze）
-│       ├── metrics.py        Python AST / JS 启发式指标 + 重复片段检测
-│       ├── diffscan.py       git diff → hunk
-│       ├── mapping.py        指标 / hunk → 音符事件
-│       └── pipeline.py       写 midi/analyze → render → mix → out/analyze.wav
-├── musician/                 `musician` 命令行入口（cli.py；python -m musician.analyze）
+│   ├── analyze/              代码 → 音乐（musician analyze）
+│   │   ├── metrics.py        Python AST / JS 启发式指标 + 重复片段检测
+│   │   ├── diffscan.py       git diff → hunk
+│   │   ├── mapping.py        指标 / hunk → 音符事件
+│   │   └── pipeline.py       写 midi/analyze → render → mix → out/analyze.wav
+│   ├── feel/                 一句话感觉 + 旋钮 → 编曲规格（spec.py）→ MIDI（compose.py）→ 带缓存渲染混音（render.py）
+│   └── web/app.py            网页界面后端（FastAPI，musician serve）
+├── web/                      网页前端（index.html + style.css + app.js，无框架）
+├── musician/                 `musician` 命令行入口（cli.py；musician serve；python -m musician.analyze）
 ├── examples/analyze_self.mid 分析本项目 src/ 生成的示例 MIDI
 ├── instruments/*.sfz         SFZ 覆盖层（起音/滤波/力度曲线）
 ├── presets/                  Surge XT 音色选择（surge_presets.json + 说明）
@@ -338,3 +399,8 @@ minor 2nds/tritones, harder velocities and staccato. Long repos are capped at `-
 (complexity × git churn). `make demo-analyze` renders this repo's own `src/`. `musician analyze --diff <repo>`
 turns git diff hunks into short motifs (added lines ascend, removed lines descend on cello).
 Output: `midi/analyze/*.mid`, `build/analyze/analysis.json`, `out/analyze.wav`.
+
+**New: web UI (`musician serve`, http://127.0.0.1:8765/)** — a Chinese, jargon-free page: describe the feel or paste
+the narration script, adjust five knobs (mood, speed, density, brightness, voice priority), preview ~20 s in the
+browser, re-render tweaks (only parts whose MIDI changed are re-rendered), export the full track (WAV/MP3/MIDI).
+Backend: FastAPI over `src/feel` (text+knobs → ArrangementSpec → mido MIDI → existing renderers + mix).

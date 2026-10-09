@@ -1,6 +1,6 @@
 PY ?= $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
 
-.PHONY: all score render render-fallback mix samples clean analyze analyze-diff demo-analyze
+.PHONY: all score render render-fallback mix samples clean analyze analyze-diff demo-analyze web web-deps
 all: score render mix            ## full pipeline (uses Surge/sfizz/samples if present)
 
 score:                           ## 1. compose -> midi/*.mid
@@ -17,6 +17,10 @@ analyze-diff:                    ## git diff of REPO (default: .) -> midi/analyz
 	$(PY) -m musician.analyze --diff --heat $(or $(REPO),.)
 demo-analyze:                    ## demo: this project's own src/ -> out/analyze.wav (+ .mp3) + out/analysis.json
 	$(PY) -m musician.analyze src --summary out/analysis.json $(if $(FALLBACK),--fallback,)
+web:                             ## web UI at http://127.0.0.1:$(or $(PORT),8765)/  (FALLBACK=1 = 草稿音色)
+	$(PY) -m src.web.app --port $(or $(PORT),8765) $(if $(FALLBACK),--fallback,)
+web-deps:                        ## install FastAPI + uvicorn for the web UI
+	$(PY) -m pip install -r requirements-web.txt
 samples:                         ## download free sample packs into ./samples
 	bash scripts/fetch_samples.sh all
 clean:

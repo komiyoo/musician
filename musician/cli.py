@@ -18,6 +18,12 @@ def main(argv=None):
     m.add_argument("--voice")
     al = sub.add_parser("all", help="score + render + mix")
     al.add_argument("--fallback", action="store_true")
+    sv = sub.add_parser("serve", help="启动网页界面（一句话 + 旋钮 → 配乐）", add_help=False)
+    sv.add_argument("rest", nargs=argparse.REMAINDER)
+    if argv and argv[0] == "serve":            # let src.web.app own its flags (--port/--host/--fallback)
+        from src.web.app import main as serve
+        serve(argv[1:])
+        return
     a = ap.parse_args(argv)
 
     if a.cmd == "analyze":

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>一句话生成配乐 · musician</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header>
+    <h1>一句话生成配乐</h1>
+    <p class="sub">写下你想要的感觉，或直接贴口播稿。点「生成试听」听 20 秒，不满意就拖动下面的旋钮再渲一次。</p>
+  </header>
+
+  <section class="card">
+    <label for="feel" class="label">感觉 / 口播稿</label>
+    <textarea id="feel" rows="4" placeholder="例如：科技解说，有点悬疑但不要太吓人，给口播让位。&#10;也可以直接把整段口播稿贴进来，导出时会按字数估算时长。"></textarea>
+    <div class="examples">
+      试试：
+      <button class="chip" data-text="轻松温暖的科技产品介绍，适合口播">轻松温暖</button>
+      <button class="chip" data-text="悬疑、紧张的数据安全解说，克制一点">悬疑紧张</button>
+      <button class="chip" data-text="发布会片头，热血、宏大、节奏感强">发布会片头</button>
+      <button class="chip" data-text="安静治愈的科普旁白，极简留白">安静科普</button>
+    </div>
+  </section>
+
+  <section class="card knobs">
+    <div class="knob">
+      <div class="knob-head"><span>情绪</span><output id="mood-v"></output></div>
+      <input type="range" id="mood" min="0" max="100" step="1">
+      <div class="ends"><span>暗</span><span>亮</span></div>
+    </div>
+    <div class="knob">
+      <div class="knob-head"><span>速度</span><output id="speed-v"></output></div>
+      <input type="range" id="speed" min="0" max="100" step="1">
+      <div class="ends"><span>慢</span><span>快</span></div>
+    </div>
+    <div class="knob">
+      <div class="knob-head"><span>密度</span><output id="density-v"></output></div>
+      <input type="range" id="density" min="0" max="100" step="1">
+      <div class="ends"><span>疏</span><span>密</span></div>
+    </div>
+    <div class="knob">
+      <div class="knob-head"><span>亮度</span><output id="brightness-v"></output></div>
+      <input type="range" id="brightness" min="0" max="100" step="1">
+      <div class="ends"><span>暗</span><span>亮</span></div>
+    </div>
+    <div class="knob wide">
+      <div class="knob-head"><span>是否抢口播</span></div>
+      <div class="seg" id="voice" role="radiogroup">
+        <button data-v="0" role="radio">不抢<small>音乐退后，人声最清楚</small></button>
+        <button data-v="1" role="radio">平衡<small>适合大多数解说</small></button>
+        <button data-v="2" role="radio">偏配乐<small>片头 / 无口播段落</small></button>
+      </div>
+    </div>
+    <label class="draft"><input type="checkbox" id="fallback"> 草稿音色（最快，适合先对节奏）</label>
+  </section>
+
+  <section class="actions">
+    <button id="btn-gen" class="primary">生成试听</button>
+    <button id="btn-tweak" disabled>微调后再渲</button>
+    <button id="btn-export" disabled>导出完整轨</button>
+  </section>
+
+  <p id="status" class="status" aria-live="polite"></p>
+  <ul id="reasons" class="reasons"></ul>
+
+  <section class="card player" id="player-card" hidden>
+    <div class="player-head"><strong id="player-title">试听</strong><span id="player-meta"></span></div>
+    <audio id="player" controls preload="auto"></audio>
+    <ul id="notes" class="notes"></ul>
+  </section>
+
+  <section class="card export" id="export-card" hidden>
+    <strong>完整轨已生成</strong> <span id="export-meta"></span>
+    <audio id="export-player" controls preload="none"></audio>
+    <div class="downloads">
+      <a id="dl-wav" class="btn" download>下载 WAV（剪辑用）</a>
+      <a id="dl-mp3" class="btn" download>下载 MP3</a>
+      <a id="dl-mid" class="link" download>工程文件（MIDI，给音乐人）</a>
+    </div>
+  </section>
+
+  <details class="card spec" id="spec-card" hidden>
+    <summary>编曲规格 JSON（自动生成，不用看懂也能用）</summary>
+    <pre id="spec"></pre>
+  </details>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
