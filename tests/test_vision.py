@@ -58,7 +58,8 @@ class Base(unittest.TestCase):
                         mock.patch.object(V, "MODEL_LISTER", lambda: None)]   # no network in tests
         for p in self.patches:
             p.start()
-        for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CTM_VISION_MODEL", "CTM_VISION_PROVIDER", "OPENAI_BASE_URL"):
+        for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CTM_VISION_MODEL", "CTM_VISION_PROVIDER", "OPENAI_BASE_URL",
+                  "CTM_VISION_TIMEOUT", "CTM_VISION_MAX_TOKENS", "CTM_VISION_REASONING"):
             os.environ.pop(k, None)
         V.clear_memory_cache()
 
@@ -126,9 +127,20 @@ class FallbackTests(Base):
 
     def test_bad_key(self):
         os.environ["ANTHROPIC_API_KEY"] = "bad"
-        with mock.patch.object(V, "HTTP_POST", side_effect=V.HTTPFail(401, "invalid x-api-key")):
+        fake = mock.Mock(side_effect=V.HTTPFail(401, "invalid x-api-key"))
+        with mock.patch.object(V, "HTTP_POST", fake):
             s = IS.suggest_from_image(png())
         self.assertIn("无效", s.vision_error)
+        self.assertEqual(fake.call_count, 1)                 # 401 = bad key → stop, don't burn the chain
+
+    def test_403_no_access_on_every_model(self):
+        os.environ["OPENAI_API_KEY"] = "sk"
+        fake = mock.Mock(side_effect=V.HTTPFail(403, '{"error":{"message":"no access to model"}}'))
+        with mock.patch.object(V, "HTTP_POST", fake):
+            s = IS.suggest_from_image(png())
+        self.assertEqual(s.source, "color")
+        self.assertIn("无权限", s.vision_error)
+        self.assertEqual(fake.call_count, len(V.OPENAI_MODELS))   # every candidate was tried
 
 
 class VisionPathTests(Base):
@@ -138,15 +150,13 @@ class VisionPathTests(Base):
 
         def fake(url, payload, headers, timeout):
             calls.append((url, payload["model"]))
-            if payload["model"] == "Qwen3.8-Flash-Next":
-                raise V.HTTPFail(404, '{"error":{"message":"The model `Qwen3.8-Flash-Next` does not exist"}}')
             img = payload["messages"][0]["content"][1]["image_url"]["url"]
             assert img.startswith("data:image/jpeg;base64,")
             return openai_reply(GOOD)
 
         with mock.patch.object(V, "HTTP_POST", side_effect=fake):
             s = IS.suggest_from_image(png())
-        self.assertEqual([m for _, m in calls], ["Qwen3.8-Flash-Next", "qwen38-flash-next"])
+        self.assertEqual([m for _, m in calls], ["Qwen3.8-Flash-Next"])
         self.assertTrue(calls[0][0].endswith("/chat/completions"))
         self.assertEqual(s.source, "vision")
         self.assertEqual(len(s.vision["angles"]), 6)
@@ -212,23 +222,36 @@ class VisionPathTests(Base):
             self.assertEqual(IS.suggest_from_image(png()).source, "vision")
         self.assertEqual(len(seen), 2)
 
-    def test_default_model_qwen_then_fallbacks(self):
+    def test_default_model_qwen_then_deepseek_vision(self):
         os.environ["OPENAI_API_KEY"] = "sk"
         ms = V._models("openai")
-        self.assertEqual(ms[0], "Qwen3.8-Flash-Next")
-        self.assertIn("deepseek-chat", ms)
+        self.assertEqual(ms[:2], ["Qwen3.8-Flash-Next", "DeepSeek-V4-Flash-Vision-Exp"])
+        self.assertNotIn("deepseek-chat", ms)                # text-only model can't read images
         os.environ["CTM_VISION_MODEL"] = "my-model"
         ms = V._models("openai")
-        self.assertEqual(ms[0], "my-model")
-        self.assertEqual(ms[1], "Qwen3.8-Flash-Next")      # default chain kept as fallback
-        self.assertIn("deepseek-chat", ms)
+        self.assertEqual(ms[:3], ["my-model", "Qwen3.8-Flash-Next", "DeepSeek-V4-Flash-Vision-Exp"])
 
     def test_model_alias_resolved_against_server_list(self):
         os.environ["OPENAI_API_KEY"] = "sk"
-        with mock.patch.object(V, "MODEL_LISTER", lambda: ["qwen38-flash-next", "DeepSeek-Chat"]):
+        with mock.patch.object(V, "MODEL_LISTER", lambda: ["deepseek-v4-flash-vision-exp", "qwen38-flash-next"]):
             ms = V._models("openai")
-        self.assertEqual(ms[:2], ["qwen38-flash-next", "DeepSeek-Chat"])
+        self.assertEqual(ms[:2], ["qwen38-flash-next", "deepseek-v4-flash-vision-exp"])
         self.assertEqual(len(ms), len(set(ms)))
+
+    def test_qwen_403_no_access_falls_back_to_deepseek(self):
+        os.environ["OPENAI_API_KEY"] = "sk"
+        tried = []
+
+        def fake(url, payload, headers, timeout):
+            tried.append(payload["model"])
+            if payload["model"] == "Qwen3.8-Flash-Next":
+                raise V.HTTPFail(403, '{"error":{"message":"no access to model Qwen3.8-Flash-Next"}}')
+            return openai_reply(json.dumps(GOOD, ensure_ascii=False))
+
+        with mock.patch.object(V, "HTTP_POST", side_effect=fake):
+            r = V.interpret_image(png(), use_cache=False)
+        self.assertEqual(tried, ["Qwen3.8-Flash-Next", "DeepSeek-V4-Flash-Vision-Exp"])
+        self.assertEqual(r.model, "DeepSeek-V4-Flash-Vision-Exp")
 
     def test_qwen_404_falls_back(self):
         os.environ["OPENAI_API_KEY"] = "sk"
@@ -236,14 +259,102 @@ class VisionPathTests(Base):
 
         def fake(url, payload, headers, timeout):
             tried.append(payload["model"])
-            if payload["model"] != "deepseek-chat":
+            if payload["model"] != "DeepSeek-V4-Flash-Vision-Exp":
                 raise V.HTTPFail(404, "model not found")
             return openai_reply(json.dumps(GOOD, ensure_ascii=False))
 
         with mock.patch.object(V, "HTTP_POST", side_effect=fake):
             r = V.interpret_image(png(), use_cache=False)
-        self.assertEqual(r.model, "deepseek-chat")
+        self.assertEqual(r.model, "DeepSeek-V4-Flash-Vision-Exp")
         self.assertEqual(tried[0], "Qwen3.8-Flash-Next")
+
+    def test_payload_defaults_tokens_reasoning_timeout(self):
+        os.environ["OPENAI_API_KEY"] = "sk"
+        seen = []
+
+        def fake(url, payload, headers, timeout):
+            seen.append((dict(payload), timeout))
+            return openai_reply(GOOD)
+
+        with mock.patch.object(V, "HTTP_POST", side_effect=fake):
+            V.interpret_image(png(), use_cache=False)
+        payload, timeout = seen[0]
+        self.assertEqual(payload["max_tokens"], 4000)
+        self.assertEqual(payload["reasoning_effort"], "none")
+        self.assertEqual(timeout, 90.0)
+
+        os.environ.update(CTM_VISION_REASONING="off", CTM_VISION_MAX_TOKENS="2500", CTM_VISION_TIMEOUT="30")
+        seen.clear()
+        with mock.patch.object(V, "HTTP_POST", side_effect=fake):
+            V.interpret_image(png(), use_cache=False)
+        self.assertNotIn("reasoning_effort", seen[0][0])
+        self.assertEqual((seen[0][0]["max_tokens"], seen[0][1]), (2500, 30.0))
+
+    def test_unsupported_reasoning_param_stripped_and_retried(self):
+        os.environ["OPENAI_API_KEY"] = "sk"
+        seen = []
+
+        def fake(url, payload, headers, timeout):
+            seen.append(dict(payload))
+            if "reasoning_effort" in payload:
+                raise V.HTTPFail(400, "Unrecognized request argument supplied: reasoning_effort")
+            if "response_format" in payload:
+                raise V.HTTPFail(400, "response_format is not supported")
+            return openai_reply(GOOD)
+
+        with mock.patch.object(V, "HTTP_POST", side_effect=fake):
+            r = V.interpret_image(png(), use_cache=False)
+        self.assertEqual(r.model, "Qwen3.8-Flash-Next")
+        self.assertEqual(len(seen), 3)
+
+    def test_empty_content_from_reasoning_model_falls_back(self):
+        os.environ["OPENAI_API_KEY"] = "sk"
+
+        def fake(url, payload, headers, timeout):
+            if payload["model"] == "Qwen3.8-Flash-Next":   # thinking ate the budget → content empty / None
+                return {"choices": [{"message": {"content": None, "reasoning_content": "..."},
+                                     "finish_reason": "length"}]}
+            return openai_reply(GOOD)
+
+        with mock.patch.object(V, "HTTP_POST", side_effect=fake):
+            r = V.interpret_image(png(), use_cache=False)
+        self.assertEqual(r.model, "DeepSeek-V4-Flash-Vision-Exp")
+
+    def test_cache_key_includes_model(self):
+        os.environ["OPENAI_API_KEY"] = "sk"
+        os.environ["CTM_VISION_MODEL"] = "Qwen3.8-Flash-Next"
+        fake = mock.Mock(return_value=openai_reply(GOOD))
+        with mock.patch.object(V, "HTTP_POST", fake):
+            r1 = V.interpret_image(png())
+            self.assertFalse(r1.cached)
+            self.assertTrue(V.interpret_image(png()).cached)            # same model → cache hit
+            os.environ["CTM_VISION_MODEL"] = "DeepSeek-V4-Flash-Vision-Exp"
+            r2 = V.interpret_image(png())                               # other model → fresh call
+            self.assertFalse(r2.cached)
+            self.assertEqual(r2.model, "DeepSeek-V4-Flash-Vision-Exp")
+            V.clear_memory_cache()
+            self.assertTrue(V.interpret_image(png()).cached)            # disk cache, keyed by model too
+        self.assertEqual(fake.call_count, 2)
+        names = sorted(p.name for p in Path(self.tmp.name).glob("*.json"))
+        self.assertEqual(len(names), 2)
+        self.assertTrue(any("qwen38flashnext" in n for n in names))
+        self.assertTrue(any("deepseekv4flashvisionexp" in n for n in names))
+        self.assertNotEqual(V.cache_key("h", "openai", "a"), V.cache_key("h", "openai", "b"))
+
+    def test_fallback_result_not_served_for_preferred_model(self):
+        os.environ["OPENAI_API_KEY"] = "sk"
+        tried = []
+
+        def fake(url, payload, headers, timeout):
+            tried.append(payload["model"])
+            if payload["model"] == "Qwen3.8-Flash-Next" and len(tried) == 1:
+                raise V.HTTPFail(503, "overloaded")
+            return openai_reply(GOOD)
+
+        with mock.patch.object(V, "HTTP_POST", side_effect=fake):
+            self.assertEqual(V.interpret_image(png()).model, "DeepSeek-V4-Flash-Vision-Exp")
+            r = V.interpret_image(png())                    # preferred Qwen retried, not DeepSeek's cached read
+        self.assertEqual((r.model, r.cached), ("Qwen3.8-Flash-Next", False))
 
     def test_dotenv_loader_does_not_override(self):
         from src import envfile

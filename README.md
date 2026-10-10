@@ -266,8 +266,8 @@ uv run musician serve       # 启动时自动读取 .env（python-dotenv；shell
 
 `.env.example` 默认：`OPENAI_BASE_URL=https://code.ticoag.fun/v1`、`CTM_VISION_MODEL=Qwen3.8-Flash-Next`。
 **`.env` 已加入 `.gitignore`，永远不要提交 `.env` 或把真实 key 写进任何会提交的文件。**
-不设 `CTM_VISION_MODEL` 时默认 `Qwen3.8-Flash-Next`；失败（404 等）依次退到 `qwen38-flash-next` → `deepseek-chat` →
-`gpt-4o-mini` …；会先查 `GET /v1/models`，把大小写 / 标点不同的写法（如 Qwen3.8-Flash-Next ↔ qwen38-flash-next）对上服务端的真实 id。
+不设 `CTM_VISION_MODEL` 时默认 `Qwen3.8-Flash-Next`；失败（404 / 403 无权限 / 5xx / 输出不可解析）依次退到
+`DeepSeek-V4-Flash-Vision-Exp` → `gpt-4o-mini` …（纯文本模型如 deepseek-chat 看不了图，已移出候选）；会先查 `GET /v1/models`，把大小写 / 标点不同的写法（如 Qwen3.8-Flash-Next ↔ qwen38-flash-next）对上服务端的真实 id。
 
 也可以直接 export（任选一种）：
 
@@ -278,12 +278,14 @@ export OPENAI_API_KEY=...  OPENAI_BASE_URL=https://openrouter.ai/api/v1  CTM_VIS
 # 或 Anthropic Claude（默认依次尝试 claude-sonnet-4-5 → claude-haiku-4-5 → claude-3-5-sonnet-latest …）：
 export ANTHROPIC_API_KEY=sk-ant-...
 # 可选：CTM_VISION_MODEL=模型1,模型2（按顺序尝试）  CTM_VISION_PROVIDER=openai|anthropic（两个 key 都有时指定）
-#       CTM_VISION_TIMEOUT=45（秒）  CTM_VISION_CACHE=build/vision_cache（缓存目录）
+#       CTM_VISION_TIMEOUT=90（秒）  CTM_VISION_MAX_TOKENS=4000  CTM_VISION_REASONING=none（reasoning_effort，off = 不发送）
+#       CTM_VISION_CACHE=build/vision_cache（缓存目录）
 uv run musician serve
 ```
 
-- 模型不存在（404）/ 限流 / 5xx 时自动换下一个候选模型；Key 无效（401/403）或超时则直接退回颜色规则并说明原因。
-- **缓存**：按图片内容 SHA-256（+ 提示词版本）缓存在 `build/vision_cache/`，同一张图再次上传不再调用模型、不再计费。
+- 模型不存在（404）/ 该模型无权限（403 "no access to model"）/ 限流 / 5xx 时自动换下一个候选模型；Key 无效（401）或超时则直接退回颜色规则并说明原因。
+- 推理模型（如 Qwen3.8-Flash-Next）默认发送 `reasoning_effort: none` 关闭思考、`max_tokens` 4000，避免思考吃光 token 只剩空内容；服务端不认这些参数时自动去掉重试。
+- **缓存**：按图片内容 SHA-256 + 模型名（+ 提示词版本）缓存在 `build/vision_cache/`，同一张图再次上传不再调用模型、不再计费。
 - 调接口只用 Python 标准库 `urllib`；`.env` 由 `python-dotenv` 读取（没装时用内置简易解析，`CTM_NO_DOTENV=1` 可关闭）。
 
 **颜色规则（兜底 / ±10 修正）**：

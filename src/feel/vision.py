@@ -17,12 +17,16 @@ suggested_duck（0/1/2 = 不抢/平衡/偏配乐）、narration_hint（口播语
   ANTHROPIC_API_KEY     Anthropic Claude
   ANTHROPIC_BASE_URL    可选，默认 https://api.anthropic.com
   CTM_VISION_MODEL      可选，指定模型（逗号分隔可给多个，按顺序尝试）；不填默认 Qwen3.8-Flash-Next，
-                        之后依次退到 qwen38-flash-next → deepseek-chat → gpt-4o-mini …（模型 404 时换下一个）
+                        之后依次退到 DeepSeek-V4-Flash-Vision-Exp → gpt-4o-mini …
+                        （模型 404 / 403 无权限 / 限流 / 5xx / 输出不可解析时换下一个；401 = Key 无效，直接停）
 
 也可以把这些变量写进仓库根目录的 .env（cp .env.example .env；.env 已被 gitignore，切勿提交），
 启动时自动读取（装了 python-dotenv 就用它，否则内置简易解析；已在 shell 里 export 的变量优先）。
   CTM_VISION_PROVIDER   可选，openai / anthropic，强制用哪家
-  CTM_VISION_TIMEOUT    可选，单次请求超时秒数，默认 45
+  CTM_VISION_TIMEOUT    可选，单次请求超时秒数，默认 90
+  CTM_VISION_MAX_TOKENS 可选，输出 token 上限，默认 4000（推理模型的思考也算在内，太小会只剩空内容）
+  CTM_VISION_REASONING  可选，OpenAI 兼容接口的 reasoning_effort，默认 none（关闭思考：更快、不吃 token）；
+                        填 off / 留空字符串则不发送该参数，服务端不支持时会自动去掉重试
 
   python -m src.feel.vision 封面.jpg      # 只打印视觉解读 JSON（调试用）
 """
@@ -46,13 +50,16 @@ from src.envfile import load_env
 
 load_env()
 
-PROMPT_VERSION = "v2"           # bump when the prompt / schema changes → invalidates the cache
+PROMPT_VERSION = "v3"           # bump when the prompt / schema changes → invalidates the cache
 SEND_SIZE = 1024                # longest side of the JPEG sent to the model
-DEFAULT_TIMEOUT = 45.0
+DEFAULT_TIMEOUT = 90.0
+DEFAULT_MAX_TOKENS = 4000          # reasoning models spend part of this on thinking
+DEFAULT_REASONING = "none"        # reasoning_effort sent to OpenAI-compatible endpoints (disables thinking)
 DEFAULT_VISION_MODEL = "Qwen3.8-Flash-Next"   # used when CTM_VISION_MODEL is unset (OpenAI-compatible endpoint)
-# tried in order; unknown ids 404 → next one. Alias spellings are resolved against GET /models when possible.
-OPENAI_MODELS = [DEFAULT_VISION_MODEL, "qwen38-flash-next", "deepseek-chat",
-                 "gpt-4o-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4.1"]
+SECONDARY_VISION_MODEL = "DeepSeek-V4-Flash-Vision-Exp"
+# tried in order; unknown ids (404) / no access (403) → next one. Alias spellings (qwen38-flash-next …) are resolved
+# against GET /models when possible. Text-only models (e.g. deepseek-chat) don't belong here: they can't see the image.
+OPENAI_MODELS = [DEFAULT_VISION_MODEL, SECONDARY_VISION_MODEL, "gpt-4o-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4.1"]
 ANTHROPIC_MODELS = ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-3-5-sonnet-latest", "claude-3-5-haiku-latest"]
 CACHE_DIR = Path(os.environ.get("CTM_VISION_CACHE", Path(__file__).resolve().parents[2] / "build" / "vision_cache"))
 
@@ -326,6 +333,22 @@ def _models(provider: str) -> list[str]:
     return _resolve_ids(m, _list_models())
 
 
+def _preferred_model(provider: str) -> str:
+    """The model the user asked for (first of CTM_VISION_MODEL, else the provider default) — part of the cache key."""
+    m = [x.strip() for x in _env("CTM_VISION_MODEL").split(",") if x.strip()]
+    return m[0] if m else (DEFAULT_VISION_MODEL if provider == "openai" else ANTHROPIC_MODELS[0])
+
+
+def _max_tokens() -> int:
+    return _clip_int(_env("CTM_VISION_MAX_TOKENS") or DEFAULT_MAX_TOKENS, 256, 32000, DEFAULT_MAX_TOKENS)
+
+
+def _reasoning_effort() -> str | None:
+    v = os.environ.get("CTM_VISION_REASONING")
+    v = DEFAULT_REASONING if v is None else v.strip()
+    return None if v.lower() in ("", "off", "default", "0", "false") else v
+
+
 def _jpeg_b64(data: bytes) -> str:
     from PIL import Image, ImageOps
     im = Image.open(io.BytesIO(data))
@@ -370,22 +393,28 @@ def _call_openai(model: str, b64: str, timeout: float) -> str:
         {"type": "text", "text": PROMPT},
         {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + b64}},
     ]}]
-    payload = {"model": model, "messages": msgs, "temperature": 0.4, "max_tokens": 1200,
+    payload = {"model": model, "messages": msgs, "temperature": 0.4, "max_tokens": _max_tokens(),
                "response_format": {"type": "json_object"}}
+    effort = _reasoning_effort()
+    if effort:
+        payload["reasoning_effort"] = effort
     hdr = {"Authorization": "Bearer " + _env("OPENAI_API_KEY")}
-    try:
-        d = HTTP_POST(base + "/chat/completions", payload, hdr, timeout)
-    except HTTPFail as e:          # some compatible servers / newer models reject these params → retry once
-        if e.status != 400 or ("response_format" not in e.body and "max_tokens" not in e.body
-                               and "temperature" not in e.body):
-            raise
-        if "response_format" in e.body:
-            payload.pop("response_format", None)
-        if "max_tokens" in e.body:
-            payload["max_completion_tokens"] = payload.pop("max_tokens")
-        if "temperature" in e.body:
-            payload.pop("temperature", None)
-        d = HTTP_POST(base + "/chat/completions", payload, hdr, timeout)
+    for _ in range(4):             # some compatible servers / newer models reject optional params → strip & retry
+        try:
+            d = HTTP_POST(base + "/chat/completions", payload, hdr, timeout)
+            break
+        except HTTPFail as e:
+            changed = False
+            if e.status == 400:
+                for k in ("reasoning_effort", "response_format", "temperature"):
+                    if k in e.body and k in payload:
+                        payload.pop(k)
+                        changed = True
+                if "max_tokens" in e.body and "max_tokens" in payload:
+                    payload["max_completion_tokens"] = payload.pop("max_tokens")
+                    changed = True
+            if not changed:
+                raise
     c = d["choices"][0]["message"]["content"]
     if isinstance(c, list):
         c = "".join(p.get("text", "") for p in c if isinstance(p, dict))
@@ -394,7 +423,7 @@ def _call_openai(model: str, b64: str, timeout: float) -> str:
 
 def _call_anthropic(model: str, b64: str, timeout: float) -> str:
     base = (_env("ANTHROPIC_BASE_URL") or "https://api.anthropic.com").rstrip("/")
-    payload = {"model": model, "max_tokens": 1200, "temperature": 0.4, "messages": [{"role": "user", "content": [
+    payload = {"model": model, "max_tokens": _max_tokens(), "temperature": 0.4, "messages": [{"role": "user", "content": [
         {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
         {"type": "text", "text": PROMPT},
     ]}]}
@@ -408,7 +437,12 @@ def _model_missing(e: HTTPFail) -> bool:
     return e.status == 404 or (e.status == 400 and "model" in b and any(w in b for w in ("not", "invalid", "exist", "support")))
 
 
-# ---------------------------------------------------------------- cache (by image sha256 + prompt version)
+def _no_model_access(e: HTTPFail) -> bool:
+    """403 on one model ("no access to model", tier / group limits) — the key itself may still work for others."""
+    return e.status == 403
+
+
+# ---------------------------------------------------------------- cache (by image sha256 + provider/model + prompt version)
 
 _MEM: dict[str, VisionResult] = {}
 _LOCK = threading.Lock()
@@ -418,15 +452,20 @@ def image_hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _cache_path(h: str) -> Path:
-    return CACHE_DIR / f"{h}.{PROMPT_VERSION}.json"
+def cache_key(h: str, provider: str, model: str) -> str:
+    """Different models read the same image differently → never serve model A's reading for model B."""
+    return f"{h}.{provider}-{_norm_id(model) or 'default'}.{PROMPT_VERSION}"
 
 
-def _cache_get(h: str) -> VisionResult | None:
+def _cache_path(key: str) -> Path:
+    return CACHE_DIR / f"{key}.json"
+
+
+def _cache_get(key: str, h: str) -> VisionResult | None:
     with _LOCK:
-        if h in _MEM:
-            return _MEM[h]
-    p = _cache_path(h)
+        if key in _MEM:
+            return _MEM[key]
+    p = _cache_path(key)
     if not p.is_file():
         return None
     try:
@@ -436,16 +475,16 @@ def _cache_get(h: str) -> VisionResult | None:
     except (OSError, ValueError, KeyError, VisionError):
         return None
     with _LOCK:
-        _MEM[h] = r
+        _MEM[key] = r
     return r
 
 
-def _cache_put(h: str, r: VisionResult) -> None:
+def _cache_put(key: str, r: VisionResult) -> None:
     with _LOCK:
-        _MEM[h] = r
+        _MEM[key] = r
     try:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        _cache_path(h).write_text(json.dumps({"provider": r.provider, "model": r.model, "raw": r.raw,
+        _cache_path(key).write_text(json.dumps({"provider": r.provider, "model": r.model, "raw": r.raw,
                                               "created": time.time()}, ensure_ascii=False, indent=1), "utf-8")
     except OSError:
         pass
@@ -462,13 +501,16 @@ def interpret_image(src, timeout: float | None = None, use_cache: bool = True) -
     """src: bytes / path. Raises VisionError (Chinese message) when no key / all models fail / timeout."""
     data = Path(src).read_bytes() if isinstance(src, (str, Path)) else bytes(src)
     h = image_hash(data)
+    provider = available_provider()
+    # cache key = image + the model the user asked for; a result produced by a fallback model is cached under that
+    # fallback's own name, so switching CTM_VISION_MODEL (or the preferred model recovering) never serves a stale read.
+    key = cache_key(h, provider or "openai", _preferred_model(provider or "openai"))
     if use_cache:
-        hit = _cache_get(h)
+        hit = _cache_get(key, h)
         if hit is not None:
             r = parse_result(hit.raw)
             r.provider, r.model, r.image_sha256, r.cached = hit.provider, hit.model, h, True
             return r
-    provider = available_provider()
     if provider is None:
         raise VisionError(NO_KEY_MSG)
     timeout = float(timeout or _env("CTM_VISION_TIMEOUT") or DEFAULT_TIMEOUT)
@@ -483,9 +525,12 @@ def interpret_image(src, timeout: float | None = None, use_cache: bool = True) -
         try:
             r = parse_result(call(model, b64, timeout))
         except HTTPFail as e:
-            if e.status in (401, 403):
-                raise VisionError(f"视觉模型 API Key 无效或无权限（{provider} HTTP {e.status}），请检查环境变量。"
+            if e.status == 401:
+                raise VisionError(f"视觉模型 API Key 无效（{provider} HTTP 401），请检查环境变量。"
                                   "本次已改用颜色规则。") from e
+            if _no_model_access(e):
+                errors.append(f"{model}: HTTP 403 无权限使用该模型")
+                continue
             errors.append(f"{model}: HTTP {e.status}")
             if _model_missing(e) or e.status in (429, 500, 502, 503, 529):
                 continue
@@ -502,8 +547,11 @@ def interpret_image(src, timeout: float | None = None, use_cache: bool = True) -
         r.provider, r.model, r.image_sha256 = provider, model, h
         r.seconds = round(time.time() - t0, 2)
         if use_cache:
-            _cache_put(h, r)
+            _cache_put(cache_key(h, provider, model), r)
         return r
+    if errors and all("HTTP 403" in x for x in errors):
+        raise VisionError(f"视觉模型 API Key 对所有候选模型都无权限（{provider} HTTP 403：" + "、".join(
+            x.split(":")[0] for x in errors[:4]) + "），请检查 Key 的模型权限或 CTM_VISION_MODEL。本次已改用颜色规则。")
     raise VisionError("视觉模型都没有成功（" + "；".join(errors[:4]) + "）。本次已改用颜色规则。")
 
 
