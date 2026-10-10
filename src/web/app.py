@@ -6,6 +6,9 @@
   POST /api/from-image   multipart: file=<图片> [, vision=1/0, preview=0/1, fallback=0/1]
                          → 多角度读图（vision=1，看图模型）+ 建议旋钮 + 感觉描述 + 画面特征 + 缩略图
                            （没配 API Key / 失败时自动退回颜色规则，原因在 vision_error；preview=1 时顺便渲试听）
+  POST /api/markov-variation  GenReq + {"temperature":0.9,"seed":null} → 钢琴声部按马尔科夫链重新采样音高，
+                         其余声部复用缓存，重新混出变奏试听（+ markov 图 JSON）
+  POST /api/markov-demo  {"temperature","seed"} → 《致艾丽丝》动机的马尔科夫图 + 原动机 / 变奏两段音频
   GET  /media/<file>     rendered WAV / MP3 / MIDI from out/web/
 
 Run:  python -m src.web.app [--port 8765] [--fallback]   (or: musician serve / make web)
@@ -57,6 +60,30 @@ class GenReq(BaseModel):
     image_reading: dict | None = None  # 图片模式：/api/from-image 返回的多角度读图，原样带回写进编曲规格
 
 
+class VarReq(GenReq):
+    temperature: float = Field(0.9, ge=0.0, le=3.0)   # p ∝ P ** (1/T)
+    seed: int | None = None                           # None → 随机（每次点击都不一样）
+    harmony: float = Field(3.0, ge=1.0, le=10.0)      # 同小节和弦内音的额外权重
+
+
+class DemoReq(BaseModel):
+    temperature: float = Field(0.9, ge=0.0, le=3.0)
+    seed: int | None = None
+
+
+MARKOV_PART = "piano"
+
+
+def _markov_graph(res: dict) -> dict | None:
+    """Graph JSON of the piano part's pitch transitions, read back from its rendered MIDI."""
+    from src.markov import MarkovChain, sequence_from_midi
+    mid = res.get("part_midi", {}).get(MARKOV_PART)
+    if not mid:
+        return None
+    seq = sequence_from_midi(mid, channel=C.PARTS[MARKOV_PART]["channel"])
+    return {"part": MARKOV_PART, "part_label": "钢琴", "n_notes": len(seq), **MarkovChain.fit(seq).graph()}
+
+
 def _url(path: str | None) -> str | None:
     return f"/media/{Path(path).name}" if path else None
 
@@ -87,10 +114,10 @@ def generate(req: GenReq):
 
 
 def _render(feel: str, knobs: dict, reasons: list[str], full: bool = False, fallback: bool = False,
-            image_reading: dict | None = None) -> dict:
+            image_reading: dict | None = None, score_hook=None, variant: str = "") -> dict:
     spec = build_spec(feel, knobs, preview=not full, image_reading=image_reading)
     try:
-        res = R.generate(spec, fallback=fallback or FORCE_FALLBACK)
+        res = R.generate(spec, fallback=fallback or FORCE_FALLBACK, score_hook=score_hook, variant=variant)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(500, f"生成失败：{e}") from e
     engines = sorted({p["engine"] for p in res["parts"].values()})
@@ -99,8 +126,39 @@ def _render(feel: str, knobs: dict, reasons: list[str], full: bool = False, fall
         "audio": _url(res["mp3"]) or _url(res["wav"]), "wav": _url(res["wav"]), "mp3": _url(res["mp3"]),
         "midi": _url(res["mid"]), "duration_s": res["duration_s"], "lufs": res["lufs"],
         "rendered": res["rendered"], "reused": res["reused"], "seconds": res["seconds"],
-        "engines": engines, "spec": res["spec"], "wav_path": res["wav"],
+        "engines": engines, "spec": res["spec"], "wav_path": res["wav"], "markov": _markov_graph(res),
     }
+
+
+@app.post("/api/markov-variation")
+def markov_variation(req: VarReq):
+    """钢琴声部：统计原来的音高转移 → 温度采样新音高（节奏/力度不变）→ 只重渲钢琴，重新混音。"""
+    import random
+
+    from src.markov.vary import vary_score_part
+    knobs = req.knobs.model_dump() if req.knobs else parse_feel(req.feel)[0]
+    seed = random.randrange(1_000_000) if req.seed is None else req.seed
+    info = {}
+
+    def hook(score):
+        r = vary_score_part(score, MARKOV_PART, req.temperature, seed, req.harmony)
+        info.update(changed=r["changed"], n_notes=r["n_notes"], source=r["chain"].graph())
+        return None
+
+    out = _render(req.feel, knobs, [], full=req.full, fallback=req.fallback, image_reading=req.image_reading,
+                  score_hook=hook, variant=f"markov:{MARKOV_PART}:{req.temperature:.3f}:{seed}:{req.harmony:.2f}")
+    if not info:   # job came fully from cache → hook still ran (compose always runs), so this is just a guard
+        raise HTTPException(500, "马尔科夫变奏失败")
+    out["variation"] = {"part": MARKOV_PART, "temperature": req.temperature, "seed": seed, "harmony": req.harmony,
+                        "changed": info["changed"], "n_notes": info["n_notes"]}
+    out["markov_source"] = {"part": MARKOV_PART, "part_label": "钢琴", **info["source"]}   # 采样用的原链
+    return out
+
+
+@app.post("/api/markov-demo")
+def markov_demo(req: DemoReq):
+    from src.markov.demo import demo
+    return demo(req.temperature, req.seed, R.OUT_WEB)
 
 
 @app.post("/api/from-image")

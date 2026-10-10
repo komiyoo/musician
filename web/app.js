@@ -10,6 +10,7 @@ const WORDS = {
 let voice = 1;
 let busy = false;
 let fromImage = false;   // knobs were set from an uploaded image → 生成试听 keeps them instead of re-reading the text
+let lastGen = null;      // body of the last preview request → 生成马尔科夫变奏 re-renders the same arrangement
 let imageReading = null; // 多角度读图（/api/from-image），图片模式下随每次生成带回后端写进编曲规格
 
 function word(k, v) { return WORDS[k][Math.min(4, Math.floor(v / 20))]; }
@@ -38,6 +39,8 @@ function lock(on) {
   $("btn-image").disabled = on;
   $("btn-tweak").disabled = on || !$("player").src;
   $("btn-export").disabled = on || !$("player").src;
+  $("btn-markov").disabled = on || !lastGen;
+  $("btn-elise").disabled = on;
 }
 
 async function generate({ full = false, useKnobs = true } = {}) {
@@ -69,6 +72,7 @@ async function generate({ full = false, useKnobs = true } = {}) {
       $("dl-mid").href = d.midi; $("dl-mid").setAttribute("download", "配乐-工程.mid");
       $("export-card").scrollIntoView({ behavior: "smooth", block: "nearest" });
     } else {
+      lastGen = { ...body, full: false, knobs: d.knobs };
       showPreview(d);
     }
   } catch (e) {
@@ -77,7 +81,9 @@ async function generate({ full = false, useKnobs = true } = {}) {
     lock(false);
   }
 }
-function showPreview(d) {
+function showPreview(d, title = "试听") {
+  $("player-title").textContent = title;
+  if (d.markov) drawMarkov(d.markov, "钢琴音高转移", `${d.markov.n_notes} 个音 · ${d.markov.n_states} 个状态 · ${d.markov.n_edges} 条转移`);
   $("spec").textContent = JSON.stringify(d.spec, null, 2);
   $("spec-card").hidden = false;
   $("player-card").hidden = false;
@@ -120,6 +126,7 @@ async function uploadImage(file) {
     const secs = ((performance.now() - t0) / 1000).toFixed(1);
     const how = d.source === "vision" ? "按读图结果" : "按图片颜色";
     if (d.preview) {
+      lastGen = { feel: d.feel, full: false, fallback: $("fallback").checked, knobs: d.knobs, image_reading: imageReading };
       showPreview(d.preview);
       status(`已${how}设好旋钮并生成 ${d.preview.duration_s} 秒试听（用时 ${secs} 秒）。可以继续拖旋钮，再点「微调后再渲」。`);
     } else {
@@ -165,6 +172,104 @@ function clearImage() {
   $("image-preview").removeAttribute("src");
 }
 
+// ---------------------------------------------------------------- 马尔科夫链：图 + 变奏 + 致艾丽丝示例
+const SVGNS = "http://www.w3.org/2000/svg";
+function svgEl(tag, attrs, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+// nodes on a circle ordered by pitch; radius ∝ √count; edge width / opacity ∝ P(from→to); self-loops in orange
+function drawMarkov(g, title, meta) {
+  const svg = $("markov-svg");
+  svg.innerHTML = "";
+  $("markov-title").textContent = title;
+  $("markov-meta").textContent = meta || "";
+  $("markov-hint").hidden = true;
+  const W = 520, H = 380, cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 42;
+  if (!g || !g.nodes.length) { svgEl("text", { x: cx, y: cy, class: "empty" }, svg).textContent = "没有音符"; return; }
+  const defs = svgEl("defs", {}, svg);
+  const mk = svgEl("marker", { id: "arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 9, markerHeight: 9, markerUnits: "userSpaceOnUse", orient: "auto-start-reverse" }, defs);
+  svgEl("path", { d: "M0,0 L10,5 L0,10 z", fill: "#3b5bdb", "fill-opacity": 0.7 }, mk);
+  const maxC = Math.max(...g.nodes.map((n) => n.count));
+  const pos = {};
+  g.nodes.forEach((n, i) => {
+    const a = -Math.PI / 2 + (2 * Math.PI * i) / g.nodes.length;
+    pos[n.pitch] = { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a), a, r: 7 + 15 * Math.sqrt(n.count / maxC), n };
+  });
+  const eg = svgEl("g", {}, svg);
+  for (const e of [...g.edges].sort((a, b) => a.prob - b.prob)) {
+    const A = pos[e.from], B = pos[e.to];
+    if (!A || !B) continue;
+    const w = (0.6 + 7 * e.prob).toFixed(2), op = (0.18 + 0.7 * e.prob).toFixed(2);
+    let d;
+    if (e.from === e.to) {           // self-loop: small circle just outside the node
+      const ox = A.x + Math.cos(A.a) * (A.r + 9), oy = A.y + Math.sin(A.a) * (A.r + 9);
+      d = `M${A.x + Math.cos(A.a) * A.r},${A.y + Math.sin(A.a) * A.r} A9,9 0 1,1 ${ox + 0.1},${oy + 0.1}`;
+    } else {                         // curved so a→b and b→a don't overlap; ends trimmed to the circles
+      const dx = B.x - A.x, dy = B.y - A.y, L = Math.hypot(dx, dy) || 1;
+      const mx = (A.x + B.x) / 2 - (dy / L) * L * 0.18, my = (A.y + B.y) / 2 + (dx / L) * L * 0.18;
+      const sa = Math.atan2(my - A.y, mx - A.x), ea = Math.atan2(my - B.y, mx - B.x);
+      d = `M${A.x + Math.cos(sa) * A.r},${A.y + Math.sin(sa) * A.r} Q${mx},${my} ${B.x + Math.cos(ea) * (B.r + 2)},${B.y + Math.sin(ea) * (B.r + 2)}`;
+    }
+    const p = svgEl("path", { d, class: "edge" + (e.from === e.to ? " self" : ""), "stroke-width": w, "stroke-opacity": op,
+      "marker-end": e.from === e.to ? "" : "url(#arrow)" }, eg);
+    svgEl("title", {}, p).textContent = `${pos[e.from].n.name} → ${pos[e.to].n.name}  P=${e.prob}（${e.count} 次）`;
+  }
+  const top = g.nodes.reduce((a, b) => (b.count > a.count ? b : a));
+  for (const n of g.nodes) {
+    const P = pos[n.pitch];
+    const c = svgEl("circle", { cx: P.x, cy: P.y, r: P.r, class: "node" + (n === top ? " hot" : "") }, svg);
+    svgEl("title", {}, c).textContent = `${n.name}（MIDI ${n.pitch}）出现 ${n.count} 次`;
+    svgEl("text", { x: P.x, y: P.y }, svg).textContent = n.name;
+  }
+}
+async function markovVariation() {
+  if (busy || !lastGen) return;
+  lock(true);
+  const T = +$("markov-temp").value, t0 = performance.now();
+  status(`正在按马尔科夫链（温度 ${T}）重新采样钢琴声部并重新混音…`, "busy");
+  try {
+    const body = { ...lastGen, fallback: $("fallback").checked, temperature: T };
+    const r = await fetch("/api/markov-variation", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    showPreview(d, "试听 · 马尔科夫变奏");
+    const v = d.variation, g = d.markov_source;
+    drawMarkov(g, "钢琴音高转移（变奏采样用）", `温度 ${v.temperature} · 种子 ${v.seed} · 改了 ${v.changed}/${v.n_notes} 个音 · ${g.n_states} 状态 · ${g.n_edges} 转移`);
+    status(`马尔科夫变奏完成：钢琴改了 ${v.changed}/${v.n_notes} 个音（节奏不变），其他声部复用 ${d.reused.length} 个，用时 ${((performance.now() - t0) / 1000).toFixed(1)} 秒。再点一次换一种变奏。`);
+  } catch (e) {
+    status("马尔科夫变奏失败：" + e.message, "err");
+  } finally {
+    lock(false);
+  }
+}
+async function eliseDemo() {
+  if (busy) return;
+  lock(true);
+  const T = +$("markov-temp").value;
+  status("正在用《致艾丽丝》动机建马尔科夫链并采样变奏…", "busy");
+  try {
+    const r = await fetch("/api/markov-demo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ temperature: T }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    drawMarkov(d.graph, "致艾丽丝 动机", `${d.original.length} 个音 · ${d.graph.n_states} 状态 · ${d.graph.n_edges} 转移 · 温度 ${d.temperature} · 改了 ${d.changed} 个音`);
+    $("elise-box").hidden = false;
+    $("elise-orig").textContent = d.original.join(" ");
+    $("elise-var").textContent = d.variation.join(" ");
+    $("elise-a-orig").src = d.audio_original;
+    const a = $("elise-a-var");
+    a.src = d.audio_variation + "?t=" + Date.now();
+    a.play().catch(() => {});
+    status("致艾丽丝示例：上面是由原动机统计出的转移图，下面可以对比原动机和马尔科夫变奏。");
+  } catch (e) {
+    status("示例失败：" + e.message, "err");
+  } finally {
+    lock(false);
+  }
+}
+
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 
 KNOBS.forEach((n) => $(n).addEventListener("input", () => showKnob(n)));
@@ -183,6 +288,9 @@ imgCard.addEventListener("drop", (e) => uploadImage(e.dataTransfer.files[0]));
 $("btn-gen").addEventListener("click", () => generate({ useKnobs: fromImage }));
 $("btn-tweak").addEventListener("click", () => generate({ useKnobs: true }));
 $("btn-export").addEventListener("click", () => generate({ full: true, useKnobs: true }));
+$("btn-markov").addEventListener("click", markovVariation);
+$("btn-elise").addEventListener("click", eliseDemo);
+$("markov-temp").addEventListener("input", () => { $("markov-temp-v").textContent = (+$("markov-temp").value).toFixed(1); });
 
 fetch("/api/health").then((r) => r.json()).then((h) => {
   setKnobs(h.defaults);

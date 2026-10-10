@@ -32,4 +32,4 @@ musician = "musician.cli:main"
 package = true
 
 [tool.setuptools]
-packages = ["src", "src.score", "src.render", "src.mix", "src.analyze", "src.feel", "src.web", "musician"]
+packages = ["src", "src.score", "src.render", "src.mix", "src.analyze", "src.feel", "src.web", "src.markov", "musician"]

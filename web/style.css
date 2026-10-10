@@ -68,3 +68,22 @@ audio { width:100%; margin:6px 0; }
 .kw .tag { font-size:13px; color:var(--ink); background:var(--acc2); border-color:#c9d3ff; }
 .narr { margin:10px 0 0; color:var(--mute); font-size:14px; }
 .fallback-note { margin:0 0 8px; padding:8px 10px; background:#fff6e5; border:1px solid #ffd8a8; border-radius:8px; color:#8a4b00; font-size:14px; }
+
+.markov-head { display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin-bottom:6px; }
+.markov-head span#markov-meta { color:var(--mute); font-size:13px; }
+#markov-svg { width:100%; height:auto; background:#fbfbf9; border:1px solid var(--line); border-radius:10px; display:block; }
+#markov-svg .edge { fill:none; stroke:var(--acc); }
+#markov-svg .edge.self { stroke:#e8590c; }
+#markov-svg .node { fill:var(--acc2); stroke:var(--acc); stroke-width:1.5; }
+#markov-svg .node.hot { fill:#ffe8cc; stroke:#e8590c; }
+#markov-svg text { font-size:11px; fill:var(--ink); text-anchor:middle; dominant-baseline:central; pointer-events:none; }
+#markov-svg .empty { fill:var(--mute); font-size:14px; }
+.markov-ctrl { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+.markov-ctrl .temp { display:flex; align-items:center; gap:6px; font-size:14px; color:var(--mute); }
+.markov-ctrl .temp input { width:120px; }
+.markov-ctrl .btn:disabled { opacity:.45; cursor:not-allowed; }
+.hint.small { font-size:13px; margin:8px 0 0; }
+.seqs { font-size:13px; color:var(--mute); margin-top:8px; line-height:1.5; }
+.seqs b { color:var(--ink); }
+.elise-audio { display:grid; grid-template-columns:1fr 1fr; gap:10px; font-size:13px; color:var(--mute); }
+@media (max-width:560px) { .elise-audio { grid-template-columns:1fr; } }

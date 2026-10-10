@@ -322,6 +322,25 @@ uv run python scripts/smoke_image.py --url http://127.0.0.1:8765 --preview   # �
 `POST /api/generate` 可带 `image_reading`（图片模式下前端会自动带上），`GET /api/health` 的 `vision` 字段表示当前可用的视觉接口。
 图片上限 20 MB；需要 `python-multipart`（已在 web 依赖里）和 `pillow`（核心依赖）。
 
+### 马尔科夫链：音高转移图 + 变奏
+
+试听生成后，旋钮下方的「马尔科夫链」卡片会画出**钢琴声部的音高转移图**：每个圆是一个音高（圆越大＝出现次数越多，橙色＝最常见），
+每条带箭头的线是「从这个音走到那个音」（线越粗、越深＝转移概率越高，橙色小圈＝重复同一个音）；鼠标悬停看具体概率和次数。
+
+- **生成马尔科夫变奏**：用同一份钢琴 MIDI 统计出的转移矩阵 P 重新采样钢琴音高（节奏、时值、力度不变；同小节的和弦内音加权 ×3，
+  避免和其他声部打架；和弦保持原样），其余声部直接复用缓存 stem，几秒内混出新的试听。每点一次换一个随机种子。
+- **温度**滑块：采样概率 ∝ P^(1/T)。T→0 几乎总走最常见的转移（接近原曲），T=1 按原始概率，T>1 更平均、更出人意料；
+  但只会走原曲里出现过的转移，所以不会跑调。
+- **致艾丽丝示例**：不用先生成，直接用 `examples/fur_elise_motif.mid`（《致艾丽丝》开头 8 小节右手动机）建链，
+  显示它的转移图，并给出「原动机 / 马尔科夫变奏」两段可对比的音频。
+
+代码在 `src/markov/`（只用标准库 + mido，无新依赖）：`chain.py`（MIDI → 音高序列 → 计数 → P → 图 JSON / 温度采样）、
+`vary.py`（声部变奏）、`demo.py`（致艾丽丝种子 MIDI + 简易钢琴渲染，`python -m src.markov.demo` 会重写种子 MIDI）。
+接口：`/api/generate` 的返回多了 `markov: {"nodes":[{pitch,name,count}], "edges":[{from,to,prob,count}], ...}`；
+`POST /api/markov-variation`（同 `/api/generate` 的参数 + `temperature`、`seed`、`harmony`）；`POST /api/markov-demo {"temperature","seed"}`。
+测试：`make test`（含 `tests/test_markov.py`）；冒烟：`make smoke-markov`（起 --fallback 服务，断言图有节点/边、变奏改了音），
+`make smoke-markov UI=1` 另用无头 Chrome 打开页面点按钮，确认无 JS 报错（playwright 通过 `uv run --with` 临时装，不进项目依赖）。
+
 ### 背后的流程
 
 ```
@@ -436,19 +455,23 @@ samples/
 │   │   └── pipeline.py       写 midi/analyze → render → mix → out/analyze.wav
 │   ├── feel/                 一句话感觉 + 旋钮 → 编曲规格（spec.py）→ MIDI（compose.py）→ 带缓存渲染混音（render.py）；
 │   │                         图片 → 旋钮（vision.py 看图模型六角度读图为主 + image_spec.py Pillow 颜色 ±10 修正 / 兜底）
+│   ├── markov/               马尔科夫链：音高转移计数 → 矩阵 P → 图 JSON；温度采样钢琴变奏；致艾丽丝示例
 │   └── web/app.py            网页界面后端（FastAPI，musician serve）
 ├── web/                      网页前端（index.html + style.css + app.js，无框架）
 ├── musician/                 `musician` 命令行入口（cli.py；musician serve；python -m musician.analyze）
 ├── examples/analyze_self.mid 分析本项目 src/ 生成的示例 MIDI
+├── examples/fur_elise_motif.mid 《致艾丽丝》开头动机（马尔科夫示例的种子 MIDI）
 ├── instruments/*.sfz         SFZ 覆盖层（起音/滤波/力度曲线）
 ├── presets/                  Surge XT 音色选择（surge_presets.json + 说明）
 ├── tests/test_vision.py      视觉解读单元测试（JSON 解析 / 融合 / 缓存 / 兜底，HTTP 已 mock；make test）
+├── tests/test_markov.py      马尔科夫链单元测试（计数 / 矩阵 / 温度 / 变奏保节奏 / 种子 MIDI）
 ├── scripts/
 │   ├── run_pipeline.sh       一键运行
 │   ├── fetch_samples.sh      下载采样包
 │   ├── list_surge_presets.py 浏览 Surge 音色
 │   ├── capture_surge_state.py 在 Surge 界面里挑音色并保存
-│   └── smoke_image.py        图片 → 音乐冒烟测试（make smoke-image）
+│   ├── smoke_image.py        图片 → 音乐冒烟测试（make smoke-image）
+│   └── smoke_markov.py       马尔科夫图 / 变奏 / 致艾丽丝冒烟测试（make smoke-markov [UI=1]）
 └── midi/                     生成的 MIDI（已提交，方便直接拖进 DAW）
 ```
 

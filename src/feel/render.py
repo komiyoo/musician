@@ -63,16 +63,19 @@ def _render_worker(part: str, midi_dir: str, tmp_dir: str, form: dict, fallback:
     return path, (Path(tmp_dir) / f"{part}.engine").read_text()
 
 
-def generate(spec: ArrangementSpec, fallback: bool = False, log=print) -> dict:
+def generate(spec: ArrangementSpec, fallback: bool = False, log=print, score_hook=None, variant: str = "") -> dict:
+    """score_hook(score) may edit the composed notes before MIDI is written (e.g. 马尔科夫变奏 of the piano);
+    `variant` must then name that edit (it goes into the job hash). Untouched parts keep their cached stems."""
     from pedalboard import HighShelfFilter, PeakFilter, Pedalboard
     from src.mix import fx, loudness
 
     t0 = time.time()
     with LOCK:
         score = CP.compose(spec)                       # also applies spec → src.config
+        hook_info = score_hook(score) if score_hook else None
         per_part, full_mid = CP.midi_files(spec, score)
         spec_json = json.dumps(spec.to_dict(), ensure_ascii=False, sort_keys=True)
-        job = _h(spec_json, fallback)
+        job = _h(spec_json, fallback, *([variant] if variant else []))
         job_dir = FEEL_DIR / "jobs" / job
         midi_dir = job_dir / "midi"
         midi_dir.mkdir(parents=True, exist_ok=True)
@@ -143,7 +146,7 @@ def generate(spec: ArrangementSpec, fallback: bool = False, log=print) -> dict:
         lufs = loudness.measure_lufs(master, sr)
         duration = master.shape[1] / sr
 
-    kind = "preview" if spec.preview else "full"
+    kind = ("preview" if spec.preview else "full") + ("-var" if variant else "")
     OUT_WEB.mkdir(parents=True, exist_ok=True)
     wav = OUT_WEB / f"{kind}-{job}.wav"
     sf.write(wav, master.T, sr, subtype="PCM_24")
@@ -163,6 +166,7 @@ def generate(spec: ArrangementSpec, fallback: bool = False, log=print) -> dict:
         "duration_s": round(duration, 1), "lufs": round(lufs, 1), "parts": report,
         "rendered": todo, "reused": cached, "seconds": round(time.time() - t0, 1),
         "render_seconds": round(t_render, 1), "spec": spec_d,
+        "part_midi": per_part, "hook": hook_info,
     }
     log(f"[feel] {kind} {job}: {duration:.1f}s, {lufs:.1f} LUFS, rendered {len(todo)}/{len(per_part)} parts "
         f"in {result['seconds']}s -> {wav}")

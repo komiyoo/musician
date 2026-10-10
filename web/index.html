@@ -84,6 +84,23 @@
     <label class="draft"><input type="checkbox" id="fallback"> 草稿音色（最快，适合先对节奏）</label>
   </section>
 
+  <section class="card markov" id="markov-card" aria-live="polite">
+    <div class="markov-head"><strong>马尔科夫链 · <span id="markov-title">钢琴音高转移</span></strong><span id="markov-meta"></span></div>
+    <p class="hint" id="markov-hint">生成试听后，这里显示钢琴声部的音高转移图：圆越大＝这个音出现越多，线越粗＝从一个音走到另一个音的概率越高。也可以先点「致艾丽丝示例」。</p>
+    <svg id="markov-svg" viewBox="0 0 520 380" role="img" aria-label="马尔科夫转移图"></svg>
+    <div class="markov-ctrl">
+      <label class="temp">温度 <input type="range" id="markov-temp" min="0" max="2" step="0.1" value="0.9"> <output id="markov-temp-v">0.9</output></label>
+      <button id="btn-markov" class="btn" type="button" disabled>生成马尔科夫变奏</button>
+      <button id="btn-elise" class="btn" type="button">致艾丽丝示例</button>
+    </div>
+    <p class="hint small">温度低：几乎总走最常见的转移，接近原曲；温度高：更平均、更出人意料（但只走原曲里出现过的转移）。变奏只改钢琴音高，节奏和其他声部不变。</p>
+    <div id="elise-box" hidden>
+      <div class="seqs"><div><b>原动机</b> <span id="elise-orig"></span></div><div><b>变奏</b> <span id="elise-var"></span></div></div>
+      <div class="elise-audio"><label>原动机 <audio id="elise-a-orig" controls preload="none"></audio></label>
+        <label>马尔科夫变奏 <audio id="elise-a-var" controls preload="none"></audio></label></div>
+    </div>
+  </section>
+
   <section class="actions">
     <button id="btn-gen" class="primary">生成试听</button>
     <button id="btn-tweak" disabled>微调后再渲</button>
