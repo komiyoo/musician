@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "title": "原来是你 · It Was You",
+  "seed": 20261009,
+  "tail_s": 3.6,
+  "master_lufs": -18,
+  "motifs": {
+    "friend": [
+      {"pitch": 62, "beats": 1}, {"pitch": 65, "beats": 1},
+      {"pitch": 69, "beats": 2}, {"pitch": 67, "beats": 1},
+      {"pitch": 64, "beats": 1}, {"pitch": 62, "beats": 2}
+    ]
+  },
+  "parts": [
+    {"id": "piano", "instrument": "piano", "role": "arpeggio", "pan": -0.15},
+    {"id": "clarinet", "instrument": "clarinet", "role": "theme", "pan": -0.2},
+    {"id": "bassoon", "instrument": "bassoon", "role": "counter", "pan": 0.15},
+    {"id": "violin", "instrument": "violin", "role": "theme", "articulation": "legato", "pan": -0.45},
+    {"id": "violin_staccato", "instrument": "violin", "role": "pulse", "articulation": "staccato", "pan": -0.3},
+    {"id": "viola", "instrument": "viola", "role": "third", "pan": 0.1},
+    {"id": "cello", "instrument": "cello", "role": "seventh", "articulation": "legato", "pan": 0.35},
+    {"id": "double_bass", "instrument": "double_bass", "role": "root", "pan": 0.25},
+    {"id": "horn", "instrument": "horn", "role": "theme", "pan": -0.25},
+    {"id": "trumpet", "instrument": "trumpet", "role": "color", "pan": 0.2},
+    {"id": "trombone", "instrument": "trombone", "role": "seventh", "pan": 0.4},
+    {"id": "flute", "instrument": "flute", "role": "counter", "pan": -0.35},
+    {"id": "oboe", "instrument": "oboe", "role": "counter", "pan": 0.25},
+    {"id": "harp", "instrument": "harp", "role": "arpeggio", "pan": -0.5},
+    {"id": "marimba", "instrument": "marimba", "role": "pulse", "pan": 0.45},
+    {"id": "vibraphone", "instrument": "vibraphone", "role": "color", "pan": -0.25},
+    {"id": "celesta", "instrument": "celesta", "role": "color", "pan": 0.4},
+    {"id": "guitar", "instrument": "guitar", "role": "color", "pan": 0.4, "gain_db": -3},
+    {"id": "sax", "instrument": "sax", "role": "counter", "pan": 0.2},
+    {"id": "choir", "instrument": "choir", "role": "pad", "gain_db": -4},
+    {"id": "timpani", "instrument": "timpani", "role": "percussion", "pan": -0.1},
+    {"id": "cymbal", "instrument": "cymbal", "role": "percussion", "pan": 0.45, "gain_db": -6},
+    {"id": "snare", "instrument": "snare", "role": "percussion", "pan": -0.35, "gain_db": -4}
+  ],
+  "sections": [
+    {
+      "id": "calm", "label": "平静 · A Small Light", "start_s": 0, "end_s": 27, "bars": 9,
+      "key": "Dm", "chords": ["Dm9", "Bbmaj7", "F", "Asus"], "energy": 0.25,
+      "parts": ["piano", "clarinet", "bassoon", "viola", "cello", "guitar"],
+      "themes": [{"motif": "friend", "part": "clarinet"}, {"motif": "friend", "part": "clarinet", "beat": 16}]
+    },
+    {
+      "id": "open", "label": "开阔 · Across the Bridge", "start_s": 27, "end_s": 44, "bars": 6,
+      "key": "F", "chords": ["Fmaj9", "C13", "Dm9", "Bbmaj7"], "energy": 0.5,
+      "parts": ["piano", "violin", "viola", "cello", "double_bass", "horn", "flute", "harp", "choir", "vibraphone"],
+      "themes": [{"motif": "friend", "part": "violin", "transpose": 12}, {"motif": "friend", "part": "horn", "beat": 8}]
+    },
+    {
+      "id": "undercurrent", "label": "暗流 · Uneasy Steps", "start_s": 44, "end_s": 64, "bars": 7,
+      "key": "Dm", "chords": ["Dm9", "Gm9", "Bbmaj7", "A7"], "energy": 0.5, "end_energy": 0.7,
+      "accents": [1.5, 1.5, 1],
+      "parts": ["piano", "clarinet", "bassoon", "violin_staccato", "viola", "cello", "double_bass", "marimba", "snare"],
+      "themes": [{"motif": "friend", "part": "clarinet", "beat": 8}]
+    },
+    {
+      "id": "danger", "label": "危机 · The Bridge Gives Way", "start_s": 64, "end_s": 84, "bars": 7,
+      "key": "Dm", "chords": ["Gm9", "A7", "Dm9", "A7"], "energy": 0.8, "end_energy": 0.9, "slowdown": 0.88,
+      "accents": [1.5, 1.5, 1],
+      "parts": ["violin_staccato", "viola", "cello", "double_bass", "trumpet", "trombone", "marimba", "timpani", "cymbal", "snare"]
+    },
+    {
+      "id": "peace", "label": "安宁 · A Familiar Friend", "start_s": 84, "end_s": 108, "bars": 8,
+      "key": "F", "chords": ["Fmaj9", "Dm9", "Bbmaj7", "C13"], "energy": 0.3,
+      "parts": ["piano", "clarinet", "flute", "oboe", "harp", "celesta", "vibraphone", "cello", "sax", "guitar", "choir"],
+      "themes": [{"motif": "friend", "part": "clarinet", "beat": 4}]
+    },
+    {
+      "id": "boss", "label": "巨影 · The Giant", "start_s": 108, "end_s": 133, "bars": 9,
+      "key": "Dm", "chords": ["Dm9", "Bbmaj7", "Gm9", "A7"], "energy": 0.8, "end_energy": 1,
+      "accents": [1.5, 1.5, 1],
+      "parts": ["horn", "trumpet", "trombone", "violin_staccato", "viola", "cello", "double_bass", "marimba", "choir", "timpani", "cymbal", "snare"],
+      "themes": [{"motif": "friend", "part": "horn", "transpose": -12, "stretch": 2}, {"motif": "friend", "part": "horn", "beat": 16, "transpose": -12, "stretch": 2}]
+    },
+    {
+      "id": "release", "label": "放手 · Letting Go", "start_s": 133, "end_s": 186, "bars": 12,
+      "key": "Dm", "chords": ["Dm9", "Bbmaj7", "Gm9", "Fmaj9", "Dm9", "Bbmaj7", "Gm9", "Asus", "Dm9", "Bbmaj7", "Asus", "Dsus2"],
+      "energy": 0.45, "end_energy": 0.08, "slowdown": 0.68,
+      "parts": ["piano", "clarinet", "cello", "viola", "double_bass", "harp", "vibraphone", "celesta", "guitar", "sax", "choir"],
+      "exits": {"guitar": 4, "double_bass": 6, "vibraphone": 6, "sax": 7, "harp": 8, "viola": 9, "choir": 10, "celesta": 11},
+      "themes": [{"motif": "friend", "part": "clarinet"}, {"motif": "friend", "part": "cello", "beat": 8, "transpose": -12}, {"motif": "friend", "part": "clarinet", "beat": 32}]
+    }
+  ],
+  "captions": [
+    {"start_s": 0, "end_s": 9, "text": "三个同伴，修好了一盏旧灯。", "translation": "Three companions repaired an old lamp."},
+    {"start_s": 9, "end_s": 18, "text": "微弱的光，照亮了彼此。", "translation": "Its small light reached each of them."},
+    {"start_s": 18, "end_s": 27, "text": "他们带着灯，继续上路。", "translation": "They carried the light onward."},
+    {"start_s": 27, "end_s": 35, "text": "桥那边，天空忽然开阔。", "translation": "Beyond the bridge, the sky opened."},
+    {"start_s": 35, "end_s": 44, "text": "有一瞬间，以为一切都会好起来。", "translation": "For a moment, everything seemed possible."},
+    {"start_s": 44, "end_s": 54, "text": "脚下传来一声轻响。", "translation": "A quiet crack came from below."},
+    {"start_s": 54, "end_s": 64, "text": "水声渐近，桥在摇晃。", "translation": "The water rose. The bridge began to sway."},
+    {"start_s": 64, "end_s": 73, "text": "下一步，踏空了。", "translation": "The next step found only air."},
+    {"start_s": 73, "end_s": 84, "text": "一只手，在最后一刻抓住了我们。", "translation": "A hand caught us at the last moment."},
+    {"start_s": 84, "end_s": 96, "text": "是朋友。我们终于松了一口气。", "translation": "A friend. At last, we could breathe."},
+    {"start_s": 96, "end_s": 108, "text": "他望着水面，迟迟没有开口。", "translation": "He watched the water without a word."},
+    {"start_s": 108, "end_s": 119, "text": "巨型机甲的影子，盖住了天空。", "translation": "A giant machine blotted out the sky."},
+    {"start_s": 119, "end_s": 133, "text": "我们以为，真正的危机才刚刚开始。", "translation": "We thought the real danger had just begun."},
+    {"start_s": 133, "end_s": 144, "text": "驾驶舱打开了。原来，是你。", "translation": "The cockpit opened. It was you."},
+    {"start_s": 144, "end_s": 155, "text": "“我答应过女儿，要给她留一盏灯。”", "translation": "I promised my daughter I would leave a light on."},
+    {"start_s": 155, "end_s": 164, "text": "可他的旧家，早已沉在水下。", "translation": "But his old home was already underwater."},
+    {"start_s": 164, "end_s": 173, "text": "我们想挽留，却找不到一句有用的话。", "translation": "We wanted him to stay. No words could help."},
+    {"start_s": 173, "end_s": 180, "text": "于是，把那盏灯递还给他。", "translation": "So we placed the lamp back in his hands."},
+    {"start_s": 180, "end_s": 186, "text": "理解之后，仍然只能放手。", "translation": "We understood. We still had to let go."}
+  ]
+}

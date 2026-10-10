@@ -13,31 +13,17 @@ Run:  python -m src.score.write_score
 from __future__ import annotations
 
 import json
+import io
+import math
 import random
-from dataclasses import dataclass, asdict
+from dataclasses import asdict
 
 import mido
 
 from src import config as C
+from src.types import Note, CC
 
 TPB = 480  # ticks per beat
-
-
-@dataclass
-class Note:
-    part: str
-    start: float   # absolute beat, 0-based
-    dur: float     # beats
-    pitch: int
-    vel: int
-
-
-@dataclass
-class CC:
-    part: str
-    beat: float
-    cc: int
-    value: int
 
 
 # --------------------------------------------------------------------- harmony
@@ -58,6 +44,13 @@ CHORDS = {
     "Gm": ("G", "Bb", "D"),
     "A": ("A", "C#", "E"),
     "Asus": ("A", "D", "E"),
+    "Dm9": ("D", "F", "A", "C", "E"),
+    "Gm9": ("G", "Bb", "D", "F", "A"),
+    "Fmaj9": ("F", "A", "C", "E", "G"),
+    "Bbmaj7": ("Bb", "D", "F", "A"),
+    "A7": ("A", "C#", "E", "G"),
+    "C13": ("C", "E", "G", "Bb", "D", "A"),
+    "Dsus2": ("D", "E", "A"),
 }
 
 # 22 bars: intro 1-6 | develop 7-18 | resolve 19-22 (cadence on Dm)
@@ -125,9 +118,11 @@ class Score:
         self.ccs: list[CC] = []
         self.rng = random.Random(seed)
 
-    def add(self, part: str, start: float, dur: float, pitch: int, vel: float, jitter: int = 6):
+    def add(self, part: str, start: float, dur: float, pitch: int, vel: float, jitter: int = 6,
+            *, notation_dur: float | None = None):
         v = int(round(vel + self.rng.uniform(-jitter, jitter)))  # 每个音轻微随机力度
-        self.notes.append(Note(part, round(start, 4), round(dur, 4), int(pitch), max(1, min(127, v))))
+        self.notes.append(Note(part, round(start, 4), round(dur, 4), int(pitch), max(1, min(127, v)),
+                               notation_dur=notation_dur))
 
     def cc(self, part: str, beat: float, cc: int, value: float):
         self.ccs.append(CC(part, round(beat, 4), cc, int(max(0, min(127, round(value))))))
@@ -263,15 +258,19 @@ def compose() -> Score:
 def tempo_track() -> mido.MidiTrack:
     tr = mido.MidiTrack()
     tr.append(mido.MetaMessage("track_name", name="conductor", time=0))
-    tr.append(mido.MetaMessage("time_signature", numerator=4, denominator=4, time=0))
-    tr.append(mido.MetaMessage("key_signature", key="Dm", time=0))
-    last_tick, last_bpm = 0, None
-    for bar in range(1, C.N_BARS + 1):
-        bpm = C.bar_bpm(bar)
-        if bpm != last_bpm:
+    tr.append(mido.MetaMessage("time_signature", numerator=C.BEATS_PER_BAR, denominator=4, time=0))
+    key = C.KEY.replace(" minor", "m").replace(" major", "")
+    tr.append(mido.MetaMessage("key_signature", key=key, time=0))
+    last_tick, last_tempo = 0, None
+    for bar, tempo in enumerate(C.tempo_map().tempos, 1):
+        tick = int(bar_start(bar) * TPB)
+        if bar in C.KEY_CHANGES:
+            tr.append(mido.MetaMessage("key_signature", key=C.KEY_CHANGES[bar], time=tick - last_tick))
+            last_tick = tick
+        if tempo != last_tempo:
             tick = int(bar_start(bar) * TPB)
-            tr.append(mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(bpm), time=tick - last_tick))
-            last_tick, last_bpm = tick, bpm
+            tr.append(mido.MetaMessage("set_tempo", tempo=tempo, time=tick - last_tick))
+            last_tick, last_tempo = tick, tempo
     tr.append(mido.MetaMessage("end_of_track", time=0))
     return tr
 
@@ -289,9 +288,15 @@ def part_track(score: Score, part: str) -> mido.MidiTrack:
     for c in score.ccs:
         if c.part == part:
             ev.append((int(round(c.beat * TPB)), -1, mido.Message("control_change", channel=ch, control=c.cc, value=c.value)))
+    keyswitch = C.PARTS[part].get("keyswitch")
+    if keyswitch is not None:
+        ev.extend([(0, -2, mido.Message("note_on", channel=ch, note=keyswitch, velocity=1)),
+                   (1, 0, mido.Message("note_off", channel=ch, note=keyswitch, velocity=0))])
     ev.sort(key=lambda e: (e[0], e[1]))
     tr = mido.MidiTrack()
     tr.append(mido.MetaMessage("track_name", name=part, time=0))
+    if "port" in C.PARTS[part]:
+        tr.append(mido.MetaMessage("midi_port", port=C.PARTS[part]["port"], time=0))
     if ch != 9:
         tr.append(mido.Message("program_change", channel=ch, program=C.PARTS[part]["program"], time=0))
     # sensible start state for samplers
@@ -304,25 +309,38 @@ def part_track(score: Score, part: str) -> mido.MidiTrack:
     for tick, _, msg in ev:
         tr.append(msg.copy(time=tick - last))
         last = tick
-    tr.append(mido.MetaMessage("end_of_track", time=TPB * 4))
+    end_tick = math.ceil(C.tempo_map().beat_at(C.total_seconds()) * TPB)
+    tr.append(mido.MetaMessage("end_of_track", time=max(0, end_tick - last)))
     return tr
+
+
+def midi_files(score: Score, parts=None, *, tracks: dict[str, mido.MidiTrack] | None = None) -> tuple[dict[str, bytes], bytes]:
+    """Full MIDI keeps port routing; isolated instrument files always use port zero."""
+    full = mido.MidiFile(type=1, ticks_per_beat=TPB)
+    full.tracks.append(tempo_track())
+    files = {}
+    for part in C.PARTS if parts is None else parts:
+        tr = tracks[part] if tracks is not None else part_track(score, part)
+        full.tracks.append(tr)
+        single = mido.MidiFile(type=1, ticks_per_beat=TPB)
+        single.tracks.append(tempo_track())
+        single.tracks.append(mido.MidiTrack(m.copy(port=0) if m.type == "midi_port" else m.copy() for m in tr))
+        buf = io.BytesIO()
+        single.save(file=buf)
+        files[part] = buf.getvalue()
+    buf = io.BytesIO()
+    full.save(file=buf)
+    return files, buf.getvalue()
 
 
 def write(score: Score) -> dict:
     C.MIDI_DIR.mkdir(parents=True, exist_ok=True)
     C.BUILD_DIR.mkdir(parents=True, exist_ok=True)
-    full = mido.MidiFile(type=1, ticks_per_beat=TPB)
-    full.tracks.append(tempo_track())
-    counts = {}
-    for part in C.PARTS:
-        tr = part_track(score, part)
-        full.tracks.append(tr)
-        single = mido.MidiFile(type=1, ticks_per_beat=TPB)
-        single.tracks.append(tempo_track())
-        single.tracks.append(tr)
-        single.save(C.MIDI_DIR / f"{part}.mid")
-        counts[part] = sum(1 for n in score.notes if n.part == part)
-    full.save(C.MIDI_DIR / "full.mid")
+    files, full = midi_files(score)
+    for part, data in files.items():
+        (C.MIDI_DIR / f"{part}.mid").write_bytes(data)
+    (C.MIDI_DIR / "full.mid").write_bytes(full)
+    counts = {p: sum(n.part == p for n in score.notes) for p in C.PARTS}
     meta = {
         "key": C.KEY, "bpm": C.BPM, "bars": C.N_BARS, "sections": C.SECTIONS,
         "progression": PROGRESSION, "rit_bpm": C.RIT_BPM,

@@ -67,6 +67,8 @@ def main(argv=None):
             continue
         target = loudness.target_for(part)
         aligned, measured, gain = loudness.align(stem, sr, target, a.mode)
+        pan = C.PARTS[part].get('pan', 0)
+        aligned *= np.sqrt([[1 - pan], [1 + pan]])
         processed = fx.chain(part)(aligned, sr)
         processed = processed[:, :n]
         sf.write(fx_dir / f"{part}.wav", processed.T, sr, subtype="FLOAT")
@@ -78,9 +80,11 @@ def main(argv=None):
 
     master = fx.master_chain()(bus, sr)
     # gentle fades: 30 ms in, 2.5 s out over the tail
-    fi, fo = int(0.03 * sr), int(2.5 * sr)
-    master[:, :fi] *= np.linspace(0, 1, fi)[None, :]
-    master[:, -fo:] *= np.linspace(1, 0, fo)[None, :] ** 1.5
+    fi, fo = min(n, int(0.03 * sr)), min(n, int(min(2.5, C.TAIL_SECONDS) * sr))
+    if fi:
+        master[:, :fi] *= np.linspace(0, 1, fi)[None, :]
+    if fo:
+        master[:, -fo:] *= np.linspace(1, 0, fo)[None, :] ** 1.5
     master, m_meas, m_gain = loudness.align(master, sr, C.MASTER_TARGET_LUFS)
     if a.voice:  # duck AFTER loudness alignment so the dips are kept (bed = -18 LUFS without voice)
         master = duck_under_voice(master, a.voice, sr)

@@ -24,7 +24,6 @@ from src import config as C
 from src.render.midi_io import write_stem
 from src.render.sfz_prepare import prepare
 
-SFIZZ_PARTS = [p for p, d in C.PARTS.items() if d["engine"] == "sfizz"]
 
 
 def sfizz_available() -> bool:
@@ -44,7 +43,7 @@ def render_sfizz(part: str, sfz, sr: int) -> np.ndarray:
     return audio.T
 
 
-def render(part: str, sr: int = C.SAMPLE_RATE, force_fallback: bool = False) -> str:
+def render(part: str, sr: int = C.SAMPLE_RATE, force_fallback: bool = False, strict: bool = False) -> str:
     reason = None
     if force_fallback:
         reason = "fallback forced"
@@ -59,13 +58,15 @@ def render(part: str, sr: int = C.SAMPLE_RATE, force_fallback: bool = False) -> 
                 return write_stem(part, render_sfizz(part, sfz, sr), sr, "sfizz")
             except Exception as e:  # noqa: BLE001
                 reason = f"sfizz failed: {e}"
+    if strict:
+        raise RuntimeError(f"{part}: {reason}")
     print(f"[sfizz] {part}: {reason} -> fallback synth")
     from src.render.fallback_synth import render_part
     return write_stem(part, render_part(part, sr), sr, "fallback")
 
 
 def main(argv=None):
-    parts = (argv or sys.argv[1:]) or SFIZZ_PARTS
+    parts = (argv or sys.argv[1:]) or [p for p, d in C.PARTS.items() if d["engine"] == "sfizz"]
     for p in parts:
         print("[sfizz] wrote", render(p))
 

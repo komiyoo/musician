@@ -26,8 +26,6 @@ import numpy as np
 from src import config as C
 from src.render.midi_io import read_part, total_samples, write_stem
 
-SURGE_PARTS = [p for p, d in C.PARTS.items() if d["engine"] == "surge"]
-PRESETS = json.loads((C.PRESETS_DIR / "surge_presets.json").read_text())
 
 FACTORY_CANDIDATES = [
     os.environ.get("CTM_SURGE_FACTORY", ""),
@@ -38,8 +36,15 @@ FACTORY_CANDIDATES = [
 ]
 
 
+def preset(part: str) -> dict:
+    configured = json.loads((C.PRESETS_DIR / "surge_presets.json").read_text())
+    settings = C.PARTS.get(part, {})
+    return {**configured.get(settings.get("instrument", part), {}),
+            **{k: settings[k] for k in ("patch", "gain_db") if settings.get(k) is not None}}
+
+
 def resolve_patch(part: str, factory_hint: str | None = None) -> Path | None:
-    rel = PRESETS.get(part, {}).get("patch")
+    rel = preset(part).get("patch")
     if not rel:
         return None
     p = Path(rel)
@@ -62,17 +67,29 @@ def render_surgepy(part: str, sr: int) -> np.ndarray:
         print(f"[surge] {part}: surgepy + patch {patch.name}")
     else:
         print(f"[surge] {part}: surgepy, patch not found -> init patch")
-    notes, _, _ = read_part(part)
+    _, _, events = read_part(part)
+    events = [m for m in events if m.type in ("note_on", "note_off", "control_change", "pitchwheel",
+                                             "aftertouch", "polytouch")]
     bs = s.getBlockSize()
     n_blocks = total_samples(sr) // bs + 1
-    events = sorted([(n.t_on, 1, n.pitch, n.vel) for n in notes] + [(n.t_off, 0, n.pitch, 0) for n in notes])
     out = np.zeros((2, n_blocks * bs), dtype=np.float32)
     ei = 0
     for b in range(n_blocks):
         t_block_end = (b + 1) * bs / sr
-        while ei < len(events) and events[ei][0] < t_block_end:
-            _, on, pitch, vel = events[ei]
-            (s.playNote if on else s.releaseNote)(0, pitch, vel if on else 0)
+        while ei < len(events) and events[ei].time < t_block_end:
+            msg = events[ei]
+            if msg.type == "note_on" and msg.velocity:
+                s.playNote(msg.channel, msg.note, msg.velocity)
+            elif msg.type in ("note_on", "note_off"):
+                s.releaseNote(msg.channel, msg.note, msg.velocity)
+            elif msg.type == "control_change":
+                s.channelController(msg.channel, msg.control, msg.value)
+            elif msg.type == "pitchwheel":
+                s.pitchBend(msg.channel, msg.pitch)
+            elif msg.type == "aftertouch":
+                s.channelAftertouch(msg.channel, msg.value)
+            else:
+                s.polyAftertouch(msg.channel, msg.note, msg.value)
             ei += 1
         s.process()
         out[:, b * bs:(b + 1) * bs] = s.getOutput()
@@ -105,7 +122,8 @@ def render_pedalboard(part: str, sr: int) -> np.ndarray:
         print(f"[surge] {part}: pedalboard, patch not found -> Surge init patch "
               f"(set CTM_SURGE_FACTORY or capture one with scripts/capture_surge_state.py {part})")
     _, _, msgs = read_part(part)
-    msgs = [m.copy(time=m.time + PREROLL) for m in msgs if m.type in ("note_on", "note_off", "control_change")]
+    msgs = [m.copy(time=m.time + PREROLL) for m in msgs if m.type in
+            ("note_on", "note_off", "control_change", "pitchwheel", "aftertouch", "polytouch")]
     audio = plugin(msgs, duration=C.total_seconds() + PREROLL, sample_rate=sr, num_channels=2)
     return np.asarray(audio, dtype=np.float32)[:, int(PREROLL * sr):]
 
@@ -139,18 +157,23 @@ def available_backend() -> str:
     return "fallback"
 
 
-def render(part: str, sr: int = C.SAMPLE_RATE, force_fallback: bool = False) -> str:
+def render(part: str, sr: int = C.SAMPLE_RATE, force_fallback: bool = False, strict: bool = False) -> str:
     backend = "fallback" if force_fallback else available_backend()
     try:
+        if strict and not (resolve_patch(part) or (C.PRESETS_DIR / f"{part}.vstpreset").is_file()
+                           or (C.PRESETS_DIR / f"{part}.state").is_file()):
+            raise RuntimeError("configured Surge preset is unavailable")
         if backend == "surgepy":
             audio = render_surgepy(part, sr)
         elif backend == "pedalboard":
             audio = render_pedalboard(part, sr)
         else:
             raise RuntimeError("Surge XT not available")
-        gain = 10 ** (PRESETS.get(part, {}).get("gain_db", 0.0) / 20)
+        gain = 10 ** (preset(part).get("gain_db", 0.0) / 20)
         return write_stem(part, audio * gain, sr, f"surge-{backend}")
     except Exception as e:  # noqa: BLE001
+        if strict:
+            raise RuntimeError(f"{part}: {e}") from e
         if backend != "fallback":
             print(f"[surge] {part}: {backend} failed ({e}); using fallback synth")
         else:
@@ -160,7 +183,7 @@ def render(part: str, sr: int = C.SAMPLE_RATE, force_fallback: bool = False) -> 
 
 
 def main(argv=None):
-    parts = (argv or sys.argv[1:]) or SURGE_PARTS
+    parts = (argv or sys.argv[1:]) or [p for p, d in C.PARTS.items() if d["engine"] == "surge"]
     for p in parts:
         print("[surge] wrote", render(p))
 

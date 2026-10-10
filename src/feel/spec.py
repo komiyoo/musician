@@ -8,7 +8,10 @@ and the knobs map to concrete musical decisions that are written into the spec
 from __future__ import annotations
 
 import re
+import math
 from dataclasses import asdict, dataclass, field
+
+from src.types import TempoMap
 
 DEFAULT_KNOBS = {"mood": 40, "speed": 50, "density": 50, "brightness": 50, "voice": 1}
 VOICE_LABELS = ["不抢", "平衡", "偏配乐"]
@@ -149,11 +152,13 @@ def build_spec(text: str, knobs: dict | None = None, preview: bool = True,
         target = PREVIEW_SECONDS
         tail = TAIL_PREVIEW
     else:
-        target = float(duration_s) if duration_s else (script_seconds(text) or EXPORT_SECONDS)
+        target = float(duration_s) if duration_s is not None else (script_seconds(text) or EXPORT_SECONDS)
         tail = TAIL_FULL
+    if not math.isfinite(target) or not 10 <= target <= 3600:
+        raise ValueError("duration must be between 10 and 3600 seconds")
     sec_per_bar = 240.0 / bpm
     bars = int(round((target - tail) / sec_per_bar))
-    bars = int(clamp(bars, 6, 64))
+    bars = max(6, bars)
     if not preview and abs(bpm - 100) < 1 and target == EXPORT_SECONDS:
         bars = 22                                     # exactly the original 22-bar form
 
@@ -173,6 +178,12 @@ def build_spec(text: str, knobs: dict | None = None, preview: bool = True,
 
     rit_steps = [0.96, 0.9, 0.84, 0.76] if n_res == 4 else [0.9, 0.78]
     rit = {resolve[0] + i: int(round(bpm * f)) for i, f in enumerate(rit_steps)}
+    bpms = [rit.get(bar, bpm) for bar in range(1, bars + 1)]
+    if not preview and duration_s is not None:
+        scale = sum(240 / b for b in bpms) / (target - tail)
+        bpms = [b * scale for b in bpms]
+        rit = {bar: b for bar, b in enumerate(bpms, 1)}
+    duration = TempoMap.from_bpms(bpms, tail_s=tail).duration_s
 
     # density → which parts play in the development section
     dev_parts = ["pad", "piano"]
@@ -210,7 +221,7 @@ def build_spec(text: str, knobs: dict | None = None, preview: bool = True,
 
     names = {"pad": "铺底长音", "piano": "钢琴", "violin": "小提琴旋律", "viola": "中提琴", "cello": "大提琴",
              "bass": "贝斯", "arp": "电子琶音", "drums": "轻鼓"}
-    notes.append(f"速度 {bpm} BPM，{bars} 小节 ≈ {round(bars * sec_per_bar + tail)} 秒")
+    notes.append(f"速度约 {bpm} BPM，{bars} 小节 ≈ {round(duration)} 秒")
     notes.append("用到的声部：" + "、".join(names[p] for p in parts))
     if not lead:
         notes.append("没有主旋律（不抢口播 / 很疏），只留和声与律动")
@@ -227,7 +238,7 @@ def build_spec(text: str, knobs: dict | None = None, preview: bool = True,
         feel=text or "", knobs={"mood": int(mood * 100), "speed": int(speed * 100), "density": int(dens * 100),
                                 "brightness": int(bright * 100), "voice": voice},
         key=key, mood_label=mood_label, bpm=bpm, bars=bars,
-        duration_s=round(bars * sec_per_bar + tail, 1), tail_s=tail, preview=preview,
+        duration_s=round(duration, 1), tail_s=tail, preview=preview,
         progression=prog, sections=sections, parts=parts, piano_rhythm=piano_rhythm, arp=arp, drums=drums,
         pad_brightness_cc74=cc74, duck_for_voice=duck, voice_mode=VOICE_LABELS[voice], bed_lufs=bed_lufs,
         lead_melody=lead, rit_bpm=rit, notes=notes, image_reading=image_reading or None,

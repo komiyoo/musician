@@ -1,10 +1,11 @@
-# audio renders
+# audio / video renders
 *.wav
 *.flac
 *.aif
 *.aiff
 *.mp3
 *.ogg
+*.mp4
 # sample packs / soundfonts (large; download with scripts/fetch_samples.sh)
 samples/
 *.sf2
@@ -19,13 +20,25 @@ presets/*.state
 # build artifacts
 build/
 out/
+dist/
 # python
 __pycache__/
 *.pyc
 .venv/
 *.egg-info/
-# analyze mode output (regenerated per target repo; examples/ keeps a sample)
-midi/analyze/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+# local render markers and logs
+*.engine
+*.log
+# macOS metadata
+.DS_Store
+# generated MIDI; reusable examples remain tracked under examples/
+/midi/
 # secrets: local env files (copy .env.example → .env; never commit .env)
 .env
 .env.*

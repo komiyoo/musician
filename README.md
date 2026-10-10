@@ -1,9 +1,11 @@
-# code-to-music · 用代码写一段科技解说铺底音乐
+# musician · 用代码写口播与叙事配乐
 
 > **D 小调 · 100 BPM · 22 小节 · ≈58 秒** — 给中文科技解说视频用的「口播铺底」配乐，从乐谱到成品全部由代码生成。
 > *Code-generated underscore for a Chinese tech-commentary video: score → MIDI → Surge XT / sfizz → pedalboard mix.*
 
 核心思路：**作曲与音色分离**。先把音乐写成 MIDI（只有音高、时值、力度、表情控制），再给每个声部挑音源（合成器 or 采样），最后统一响度并加效果。改旋律不用动音色，换音色也不用动旋律。
+
+仓库内置 [music-composition skill](.agents/skills/music-composition/SKILL.md)，用于乐理、作曲与配器分析；固定版本和许可证见[来源记录](.agents/skills/music-composition/UPSTREAM.md)。
 
 ```
                 ┌──────────── 1. 作曲 Score ────────────┐
@@ -80,6 +82,79 @@ uv run musician mix --voice 口播.wav    #    可选：按口播音量自动压
 
 ---
 
+## 叙事配乐：故事时间表 → 乐谱 → 音频与视频
+
+`musician story` 接受人或 Agent 编写的结构化故事规格。每一段明确时间、和声、配器和主题使用方式，
+程序生成可复现的乐谱与音频。示例 [`examples/originally-you.json`](examples/originally-you.json)
+实现《原来是你》：**58 小节、23 声部、约 186 秒、19 段双语字幕**。
+
+```bash
+uv sync --extra web
+
+# 先检查乐谱：输出 MIDI 与包含逐音时间的 score.json
+uv run musician story examples/originally-you.json --midi-only
+
+# 无需安装音源也能生成完整草稿
+uv run musician story examples/originally-you.json --fallback
+
+# 加入双语轨道、音符动画、叙事文字、真实音频频谱（需要 FFmpeg 和中文字体）
+uv run musician story examples/originally-you.json --fallback --video
+
+# 使用自己安装的 SoundFont，任何正式音源失败都报错
+uv run musician story examples/originally-you.json --soundfont /path/to/orchestra.sf2 --strict
+
+# 同步交付 MusicXML 总谱、23 份分谱、乐器清单和可打印预览（需要 notation extra）
+uv sync --extra web --extra notation
+uv run musician story examples/originally-you.json --fallback --sheet-preview \\
+  --out out/story/originally-you-handoff
+
+# 专业人员改完 MusicXML 或 MIDI 后，用保留原声部 ID 的多轨 type-1 MIDI 回渲染
+uv run musician story out/story/originally-you-handoff/story.json \\
+  --midi /path/to/edited.mid --fallback --sheet-preview --out out/story/revised
+
+# 给 Agent 查看完整输入契约
+uv run musician story --schema
+```
+
+默认每次在 `out/story/` 下创建独立目录。`--out <目录>` 可指定一个空目录；已有作品不会被覆盖。
+目录包含 `midi/full.mid`、各声部 MIDI、`score.json`、`stems/`、`build/stems_fx/`、
+`final.wav`、`final.report.json`，安装 FFmpeg 后还会输出 MP3；`--video` 增加 `final.mp4`。
+交付模式另有 `notation/full.musicxml`、每件乐器的 `notation/<part>.musicxml`、
+`instruments.csv` 和 `HANDOFF.md`。MusicXML 是实际音高的可编辑自动排谱稿；MIDI 保留力度、踏板、表情和声部端口。
+`--sheet-preview` 生成可在浏览器打印的 SVG/HTML 总谱与分谱。编辑后的 MIDI 必须保留原有声部 ID、4/4 拍、总小节数和速度表；导入会检查未知轨、未闭合音符、越界事件和速度偏差。
+
+故事规格的关键字段：
+
+| 字段 | 用途 |
+|---|---|
+| `parts` | 声部 ID、乐器、和声职责、演奏法、声像、音源文件 |
+| `motifs` | 一次定义主题的音高与时值，单位为四分音符拍 |
+| `sections` | 连续起止秒数、小节数、和弦、能量、使用的声部与渐慢比例 |
+| `sections[].themes` | 指定主题出现的声部、段内拍位置、移调和时值倍率 |
+| `sections[].exits` | 指定声部在该段演奏到第几个小节，实现逐层退出 |
+| `captions` | 按秒排列且不重叠的中英叙事文字 |
+| `tail_s` | 包含在最后一段内的余响时长 |
+
+Boss 段的主题使用 `transpose: -12`、`stretch: 2`，认出时恢复原主题。七个段落的转场固定在
+27 / 44 / 64 / 84 / 108 / 133 秒；每小节的速度由段落秒数反算。MIDI、音符 JSON 与视频使用同一份
+量化为微秒每拍的速度表。当前支持 4/4 拍、每小节一个和弦，调性为 D 小调或 F 大调。
+
+音源可逐声部指定 `sfz`、`soundfont` 或 `patch`，相对路径以故事 JSON 所在目录为基准。
+`engine` 支持 `auto` / `sfizz` / `fluidsynth` / `surge` / `fallback`。
+`--soundfont`（或 `CTM_SOUNDFONT`）为没有单独配置音源的自动采样声部提供默认 SF2/SF3。
+SFZ 用 sfizz，SoundFont 用 FluidSynth；两者都需要安装相应命令行工具。
+可用 `CTM_FLUIDSYNTH` 指定 FluidSynth 可执行文件路径。
+
+短弓、拨弦与震音声部应配置对应的采样文件；可用 `keyswitch` 指定该轨起始的采样演奏法切换键。
+草稿合成器提供音色家族、短音包络、表情和踏板模拟，不能验证真实采样连奏的音质。
+完整 MIDI 使用端口与通道隔离声部；导入 DAW 后为每轨分配音源。普通 MIDI 播放器可能忽略端口。
+
+故事模式默认使用器乐混音。`--voice narration.wav` 可按实际旁白压低配乐，并启用人声频段让位；
+输出仍是配乐，不会把旁白合入。视频默认寻找系统中文字体；找不到时传 `--font /path/to/font.ttc`。
+视频中的音块表示 MIDI 起止时间，频谱表示最终音频，踏板、采样起音与余响可能超出音块范围。
+
+详细契约和设计见[叙事配乐文档](docs/story-scoring.md)，[JSON Schema](schemas/story.schema.json) 由同一模型生成。
+
 ## 新模式：`musician analyze` —— 让代码自己作曲
 
 除了手写的 22 小节铺底，现在还可以把**任意代码仓库的真实结构**变成音乐（思路参考 repo2music），
@@ -121,7 +196,7 @@ uv run make demo-analyze                           # 演示：分析本项目 sr
 ```
 
 输出位置与主流程互不干扰：`midi/analyze/`、`midi/analyze/diff/`、`build/analyze/`、`out/analyze*.wav`。
-`midi/*.mid`、`out/final.wav` 不会被覆盖。`midi/analyze/` 已加入 `.gitignore`；
+`midi/*.mid`、`out/final.wav` 不会被覆盖。整个 `midi/` 生成目录已加入 `.gitignore`；
 `examples/analyze_self.mid` 是分析本项目 `src/` 得到的示例。
 
 ### 映射规则（整仓模式）
@@ -472,7 +547,7 @@ samples/
 │   ├── capture_surge_state.py 在 Surge 界面里挑音色并保存
 │   ├── smoke_image.py        图片 → 音乐冒烟测试（make smoke-image）
 │   └── smoke_markov.py       马尔科夫图 / 变奏 / 致艾丽丝冒烟测试（make smoke-markov [UI=1]）
-└── midi/                     生成的 MIDI（已提交，方便直接拖进 DAW）
+└── midi/                     生成的 MIDI（不提交；运行 musician score 后可拖进 DAW）
 ```
 
 ## 常用调整

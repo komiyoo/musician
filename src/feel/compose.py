@@ -5,10 +5,7 @@ MIDI of the parts it actually affects — that is what lets render.py re-render 
 """
 from __future__ import annotations
 
-import io
 import zlib
-
-import mido
 
 from src import config as C
 from src.feel.spec import ArrangementSpec
@@ -22,6 +19,8 @@ SCALE = [2, 4, 5, 7, 9, 10, 0]
 def apply_config(spec: ArrangementSpec) -> None:
     """Point src.config's form (tempo, length, rit, sections) at this spec."""
     C.BPM = spec.bpm
+    C.KEY = spec.key
+    C.KEY_CHANGES = {}
     C.N_BARS = spec.bars
     C.RIT_BPM = dict(spec.rit_bpm)
     C.TAIL_SECONDS = spec.tail_s
@@ -196,25 +195,8 @@ def compose(spec: ArrangementSpec) -> W.Score:
     return full
 
 
-def _midi_bytes(mf: mido.MidiFile) -> bytes:
-    buf = io.BytesIO()
-    mf.save(file=buf)
-    return buf.getvalue()
-
-
 def midi_files(spec: ArrangementSpec, score: W.Score) -> tuple[dict[str, bytes], bytes]:
     """Per-part MIDI (tempo map + that part) for the renderers, plus full.mid for DAWs."""
     apply_config(spec)
-    full = mido.MidiFile(type=1, ticks_per_beat=W.TPB)
-    full.tracks.append(W.tempo_track())
-    per_part = {}
-    for part in C.PARTS:
-        if not any(n.part == part for n in score.notes):
-            continue
-        tr = W.part_track(score, part)
-        full.tracks.append(tr)
-        single = mido.MidiFile(type=1, ticks_per_beat=W.TPB)
-        single.tracks.append(W.tempo_track())
-        single.tracks.append(tr)
-        per_part[part] = _midi_bytes(single)
-    return per_part, _midi_bytes(full)
+    active = {n.part for n in score.notes}
+    return W.midi_files(score, [p for p in C.PARTS if p in active])

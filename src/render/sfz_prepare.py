@@ -183,8 +183,13 @@ def find_pack_sfz(glob: str) -> Path | None:
 
 def prepare(part: str) -> Path | None:
     """Return path of build/sfz/<part>.sfz, or None if samples are missing."""
-    src = C.SAMPLE_SOURCES.get(part)
-    overrides = C.INSTRUMENTS_DIR / f"{part}.sfz"
+    settings = C.PARTS.get(part, {})
+    if settings.get("sfz"):
+        path = Path(settings["sfz"])
+        return path if path.is_file() else None
+    instrument = settings.get("instrument", part)
+    src = C.SAMPLE_SOURCES.get(instrument)
+    overrides = C.INSTRUMENTS_DIR / f"{instrument}.sfz"
     if not src or not overrides.exists():
         return None
     C.SFZ_BUILD_DIR.mkdir(parents=True, exist_ok=True)

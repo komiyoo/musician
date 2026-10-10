@@ -18,10 +18,13 @@ dependencies = [
   "pyloudnorm>=0.1.1",
   "pillow>=10.0",                 # image → music (src/feel/image_spec.py)
   "python-dotenv>=1.0",           # load local .env (API keys; never committed) — src/envfile.py
+  "pydantic>=2.0",               # shared story contract and generated JSON Schema
+  "music21>=9.7",               # standard MusicXML notation export
 ]
 
 [project.optional-dependencies]
 web = ["fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]   # multipart = /api/from-image upload
+notation = ["verovio>=5.0"]     # local printable SVG/HTML sheet previews
 
 [project.scripts]
 musician = "musician.cli:main"
@@ -32,4 +35,4 @@ musician = "musician.cli:main"
 package = true
 
 [tool.setuptools]
-packages = ["src", "src.score", "src.render", "src.mix", "src.analyze", "src.feel", "src.web", "src.markov", "musician"]
+packages = ["src", "src.types", "src.story", "src.score", "src.render", "src.mix", "src.analyze", "src.feel", "src.web", "src.markov", "musician"]

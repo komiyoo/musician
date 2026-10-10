@@ -15,7 +15,6 @@ import hashlib
 import json
 import shutil
 import subprocess
-import threading
 import time
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import get_context
@@ -28,10 +27,10 @@ from src import config as C
 from src.feel import compose as CP
 from src.feel.spec import ArrangementSpec
 
-CACHE_VERSION = "feel-1"
+CACHE_VERSION = "feel-2"
 FEEL_DIR = C.ROOT / "build" / "feel"
 OUT_WEB = C.OUT_DIR / "web"
-LOCK = threading.Lock()          # src.config is module-global state: one render at a time
+LOCK = C.RENDER_LOCK
 _POOL: ProcessPoolExecutor | None = None
 
 
@@ -48,6 +47,13 @@ def _h(*parts) -> str:
         m.update(p if isinstance(p, bytes) else str(p).encode())
         m.update(b"\0")
     return m.hexdigest()[:16]
+
+
+def cached_stem(path: Path, expected_backend: str) -> bool:
+    tag = path.with_suffix('.engine')
+    if not path.is_file() or not tag.is_file():
+        return False
+    return expected_backend == 'fallback' or tag.read_text() != 'fallback'
 
 
 def _render_worker(part: str, midi_dir: str, tmp_dir: str, form: dict, fallback: bool) -> tuple[str, str]:
@@ -68,6 +74,7 @@ def generate(spec: ArrangementSpec, fallback: bool = False, log=print, score_hoo
     `variant` must then name that edit (it goes into the job hash). Untouched parts keep their cached stems."""
     from pedalboard import HighShelfFilter, PeakFilter, Pedalboard
     from src.mix import fx, loudness
+    from src.render.render_all import render_signature, effects_signature
 
     t0 = time.time()
     with LOCK:
@@ -90,8 +97,10 @@ def generate(spec: ArrangementSpec, fallback: bool = False, log=print, score_hoo
         form = {"bpm": C.BPM, "bars": C.N_BARS, "tail": C.TAIL_SECONDS, "rit": C.RIT_BPM}
 
         # ---------------------------------------------------- 1. render only parts whose MIDI changed
-        keys = {p: _h(b, mode, sr) for p, b in per_part.items()}
-        todo = [p for p in per_part if not (stem_dir / f"{p}-{keys[p]}.wav").exists()]
+        signatures = {p: render_signature(p) for p in per_part}
+        keys = {p: _h(b, mode, sr, C.total_seconds(), signatures[p]) for p, b in per_part.items()}
+        todo = [p for p in per_part if not cached_stem(stem_dir / f"{p}-{keys[p]}.wav",
+                'fallback' if fallback else json.loads(signatures[p])['backend'])]
         cached = [p for p in per_part if p not in todo]
         if todo:
             log(f"[feel] rendering {', '.join(todo)} (cached: {', '.join(cached) or '-'})")
@@ -110,17 +119,16 @@ def generate(spec: ArrangementSpec, fallback: bool = False, log=print, score_hoo
         t_render = time.time() - t0
 
         # ---------------------------------------------------- 2. loudness align + per-track FX (cached)
-        fx.BEAT = 60.0 / spec.bpm
-        fx.DOTTED_EIGHTH = fx.BEAT * 0.75                 # arp delay follows the tempo
         n = int(round(C.total_seconds() * sr))
         bus = np.zeros((2, n), dtype=np.float32)
         report = {}
         lead_trim = {"不抢": -4.0, "平衡": 0.0, "偏配乐": +1.5}[spec.voice_mode]
         for p in per_part:
             target = loudness.target_for(p) + (lead_trim if p in ("violin", "piano") else 0.0)
-            fk = _h(keys[p], target, spec.bpm, n)
+            engine = (stem_dir / f"{p}-{keys[p]}.engine").read_text()
+            fk = _h(keys[p], engine, target, spec.bpm, n, effects_signature())
             fpath = fx_dir / f"{p}-{fk}.wav"
-            if fpath.exists():
+            if fpath.exists() and p not in todo:
                 proc, _ = sf.read(fpath, always_2d=True, dtype="float32")
                 proc = proc.T
             else:
@@ -129,7 +137,7 @@ def generate(spec: ArrangementSpec, fallback: bool = False, log=print, score_hoo
                 proc = fx.chain(p)(aligned, sr)[:, :n]
                 sf.write(fpath, proc.T, sr, subtype="FLOAT")
             bus[:, : proc.shape[1]] += proc[:, :n]
-            report[p] = {"engine": (stem_dir / f"{p}-{keys[p]}.engine").read_text(), "target_lufs": target,
+            report[p] = {"engine": engine, "target_lufs": target,
                          "cached": p in cached}
 
         # ---------------------------------------------------- 3. master: voice pocket, brightness tilt, LUFS, limiter

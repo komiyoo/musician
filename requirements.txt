@@ -1,11 +1,54 @@
 # 由 uv.lock 自动生成（make requirements），供不用 uv 的 pip 用户；请改 pyproject.toml，不要手改本文件。
+annotated-types==0.8.0
+    # via pydantic
+certifi==2026.7.22
+    # via requests
 cffi==2.1.1
     # via soundfile
+chardet==7.6.0
+    # via music21
+charset-normalizer==3.5.2
+    # via requests
+cloudpickle==3.1.2
+    # via joblib
+contourpy==1.3.2 ; python_full_version < '3.11'
+    # via matplotlib
+contourpy==1.3.3 ; python_full_version == '3.11.*'
+    # via matplotlib
+contourpy==1.4.0 ; python_full_version >= '3.12'
+    # via matplotlib
+cycler==0.12.1
+    # via matplotlib
+fonttools==4.65.0 ; python_full_version < '3.11'
+    # via matplotlib
+fonttools==4.66.1 ; python_full_version >= '3.11'
+    # via matplotlib
+idna==3.20
+    # via requests
+joblib==1.6.0
+    # via music21
+jsonpickle==4.1.3
+    # via music21
+kiwisolver==1.5.1
+    # via matplotlib
+matplotlib==3.10.9 ; python_full_version < '3.11'
+    # via music21
+matplotlib==3.11.2 ; python_full_version >= '3.11'
+    # via music21
 mido==1.3.3
+    # via code-to-music
+more-itertools==11.1.0
+    # via music21
+music21==9.9.2 ; python_full_version < '3.11'
+    # via code-to-music
+music21==10.5.0 ; python_full_version >= '3.11'
     # via code-to-music
 numpy==2.2.6 ; python_full_version < '3.11'
     # via
     #   code-to-music
+    #   contourpy
+    #   matplotlib
+    #   music21
     #   pedalboard
     #   pyloudnorm
     #   scipy
@@ -13,6 +56,9 @@ numpy==2.2.6 ; python_full_version < '3.11'
 numpy==2.4.6 ; python_full_version == '3.11.*'
     # via
     #   code-to-music
+    #   contourpy
+    #   matplotlib
+    #   music21
     #   pedalboard
     #   pyloudnorm
     #   scipy
@@ -20,22 +66,39 @@ numpy==2.4.6 ; python_full_version == '3.11.*'
 numpy==2.5.3 ; python_full_version >= '3.12'
     # via
     #   code-to-music
+    #   contourpy
+    #   matplotlib
+    #   music21
     #   pedalboard
     #   pyloudnorm
     #   scipy
     #   soundfile
 packaging==26.3
-    # via mido
+    # via
+    #   matplotlib
+    #   mido
 pedalboard==0.9.26
     # via code-to-music
 pillow==12.3.0
-    # via code-to-music
+    # via
+    #   code-to-music
+    #   matplotlib
 pycparser==3.11 ; implementation_name != 'PyPy'
     # via cffi
+pydantic==2.14.0
+    # via code-to-music
+pydantic-core==2.50.0
+    # via pydantic
 pyloudnorm==0.2.0
     # via code-to-music
+pyparsing==3.3.3
+    # via matplotlib
+python-dateutil==2.9.0.post0
+    # via matplotlib
 python-dotenv==1.2.4
     # via code-to-music
+requests==2.34.2
+    # via music21
 scipy==1.15.3 ; python_full_version < '3.11'
     # via
     #   code-to-music
@@ -48,7 +111,19 @@ scipy==1.18.1 ; python_full_version >= '3.12'
     # via
     #   code-to-music
     #   pyloudnorm
+six==1.17.0
+    # via python-dateutil
 soundfile==0.14.0
     # via code-to-music
 typing-extensions==4.16.0
-    # via soundfile
+    # via
+    #   pydantic
+    #   pydantic-core
+    #   soundfile
+    #   typing-inspection
+typing-inspection==0.4.4
+    # via pydantic
+urllib3==2.8.0
+    # via requests
+webcolors==25.10.0
+    # via music21

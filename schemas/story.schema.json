@@ -1,0 +1,463 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Generated from src/types/story.py; regenerate with musician story --schema.",
+  "$defs": {
+    "Caption": {
+      "additionalProperties": false,
+      "properties": {
+        "start_s": {
+          "minimum": 0,
+          "title": "Start S",
+          "type": "number"
+        },
+        "end_s": {
+          "exclusiveMinimum": 0,
+          "title": "End S",
+          "type": "number"
+        },
+        "text": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "translation": {
+          "default": "",
+          "maxLength": 320,
+          "title": "Translation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start_s",
+        "end_s",
+        "text"
+      ],
+      "title": "Caption",
+      "type": "object"
+    },
+    "MotifNote": {
+      "additionalProperties": false,
+      "properties": {
+        "pitch": {
+          "maximum": 127,
+          "minimum": 0,
+          "title": "Pitch",
+          "type": "integer"
+        },
+        "beats": {
+          "exclusiveMinimum": 0,
+          "maximum": 16,
+          "title": "Beats",
+          "type": "number"
+        }
+      },
+      "required": [
+        "pitch",
+        "beats"
+      ],
+      "title": "MotifNote",
+      "type": "object"
+    },
+    "StoryPart": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "instrument": {
+          "enum": [
+            "piano",
+            "clarinet",
+            "bassoon",
+            "violin",
+            "viola",
+            "cello",
+            "double_bass",
+            "horn",
+            "trumpet",
+            "trombone",
+            "flute",
+            "oboe",
+            "harp",
+            "marimba",
+            "vibraphone",
+            "celesta",
+            "guitar",
+            "sax",
+            "choir",
+            "timpani",
+            "cymbal",
+            "snare",
+            "pad",
+            "bass",
+            "arp"
+          ],
+          "title": "Instrument",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "theme",
+            "root",
+            "third",
+            "seventh",
+            "color",
+            "arpeggio",
+            "pulse",
+            "counter",
+            "pad",
+            "percussion"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "articulation": {
+          "default": "sustain",
+          "enum": [
+            "sustain",
+            "legato",
+            "staccato",
+            "pizzicato",
+            "tremolo"
+          ],
+          "title": "Articulation",
+          "type": "string"
+        },
+        "engine": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "sfizz",
+            "fluidsynth",
+            "surge",
+            "fallback"
+          ],
+          "title": "Engine",
+          "type": "string"
+        },
+        "sfz": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sfz"
+        },
+        "soundfont": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Soundfont"
+        },
+        "patch": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Patch"
+        },
+        "keyswitch": {
+          "anyOf": [
+            {
+              "maximum": 127,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Keyswitch"
+        },
+        "pan": {
+          "default": 0,
+          "maximum": 1,
+          "minimum": -1,
+          "title": "Pan",
+          "type": "number"
+        },
+        "gain_db": {
+          "default": 0,
+          "maximum": 12,
+          "minimum": -36,
+          "title": "Gain Db",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "instrument",
+        "role"
+      ],
+      "title": "StoryPart",
+      "type": "object"
+    },
+    "StorySection": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "start_s": {
+          "minimum": 0,
+          "title": "Start S",
+          "type": "number"
+        },
+        "end_s": {
+          "exclusiveMinimum": 0,
+          "maximum": 3600,
+          "title": "End S",
+          "type": "number"
+        },
+        "bars": {
+          "maximum": 256,
+          "minimum": 1,
+          "title": "Bars",
+          "type": "integer"
+        },
+        "key": {
+          "default": "Dm",
+          "enum": [
+            "Dm",
+            "F"
+          ],
+          "title": "Key",
+          "type": "string"
+        },
+        "chords": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 256,
+          "minItems": 1,
+          "title": "Chords",
+          "type": "array"
+        },
+        "parts": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Parts",
+          "type": "array"
+        },
+        "energy": {
+          "default": 0.5,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Energy",
+          "type": "number"
+        },
+        "end_energy": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End Energy"
+        },
+        "slowdown": {
+          "default": 1,
+          "maximum": 1,
+          "minimum": 0.35,
+          "title": "Slowdown",
+          "type": "number"
+        },
+        "accents": {
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Accents",
+          "type": "array"
+        },
+        "themes": {
+          "items": {
+            "$ref": "#/$defs/ThemeUse"
+          },
+          "maxItems": 128,
+          "title": "Themes",
+          "type": "array"
+        },
+        "exits": {
+          "patternProperties": {
+            "^[a-z][a-z0-9_-]{0,47}$": {
+              "type": "integer"
+            }
+          },
+          "title": "Exits",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "start_s",
+        "end_s",
+        "bars",
+        "chords",
+        "parts"
+      ],
+      "title": "StorySection",
+      "type": "object"
+    },
+    "ThemeUse": {
+      "additionalProperties": false,
+      "properties": {
+        "motif": {
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "Motif",
+          "type": "string"
+        },
+        "part": {
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "Part",
+          "type": "string"
+        },
+        "beat": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Beat",
+          "type": "number"
+        },
+        "transpose": {
+          "default": 0,
+          "maximum": 48,
+          "minimum": -48,
+          "title": "Transpose",
+          "type": "integer"
+        },
+        "stretch": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "maximum": 8,
+          "title": "Stretch",
+          "type": "number"
+        }
+      },
+      "required": [
+        "motif",
+        "part"
+      ],
+      "title": "ThemeUse",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1,
+      "default": 1,
+      "title": "Version",
+      "type": "integer"
+    },
+    "title": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "seed": {
+      "default": 20261009,
+      "maximum": 4294967295,
+      "minimum": 0,
+      "title": "Seed",
+      "type": "integer"
+    },
+    "tail_s": {
+      "default": 3.6,
+      "maximum": 20,
+      "minimum": 0,
+      "title": "Tail S",
+      "type": "number"
+    },
+    "master_lufs": {
+      "default": -18,
+      "maximum": -12,
+      "minimum": -30,
+      "title": "Master Lufs",
+      "type": "number"
+    },
+    "parts": {
+      "items": {
+        "$ref": "#/$defs/StoryPart"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "title": "Parts",
+      "type": "array"
+    },
+    "motifs": {
+      "patternProperties": {
+        "^[a-z][a-z0-9_-]{0,47}$": {
+          "items": {
+            "$ref": "#/$defs/MotifNote"
+          },
+          "type": "array"
+        }
+      },
+      "title": "Motifs",
+      "type": "object"
+    },
+    "sections": {
+      "items": {
+        "$ref": "#/$defs/StorySection"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "title": "Sections",
+      "type": "array"
+    },
+    "captions": {
+      "items": {
+        "$ref": "#/$defs/Caption"
+      },
+      "maxItems": 500,
+      "title": "Captions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "title",
+    "parts",
+    "sections"
+  ],
+  "title": "StorySpec",
+  "type": "object"
+}

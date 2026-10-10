@@ -13,15 +13,18 @@ from pedalboard import (
 
 from src import config as C
 
-BEAT = 60.0 / C.BPM            # 0.6 s
-DOTTED_EIGHTH = BEAT * 0.75     # 0.45 s
-
-
-def voice_pocket(db: float = -3.0, hz: float = 2500.0, q: float = 0.8) -> PeakFilter:
+def voice_pocket(db: float = -3.0, hz: float = 2500.0, q: float = 0.8) -> PeakFilter | Gain:
+    if not C.NARRATION_MODE:
+        return Gain(0)
     return PeakFilter(cutoff_frequency_hz=hz, gain_db=db, q=q)
 
 
 def chain(part: str) -> Pedalboard:
+    settings = C.PARTS.get(part, {})
+    family = settings.get('family')
+    part = settings.get('instrument', part)
+    if family == 'drums':
+        part = 'drums'
     if part == "pad":
         return Pedalboard([
             HighpassFilter(140), LowpassFilter(7000), voice_pocket(-4.0),
@@ -57,7 +60,7 @@ def chain(part: str) -> Pedalboard:
     if part == "arp":
         return Pedalboard([
             HighpassFilter(320), voice_pocket(-5.0, 2600), HighShelfFilter(9000, gain_db=-3.0),
-            Delay(delay_seconds=DOTTED_EIGHTH, feedback=0.28, mix=0.2),
+            Delay(delay_seconds=60 / C.BPM * 0.75, feedback=0.28, mix=0.2),
             Reverb(room_size=0.7, damping=0.5, wet_level=0.3, dry_level=0.75, width=1.0),
         ])
     if part == "drums":
@@ -65,6 +68,13 @@ def chain(part: str) -> Pedalboard:
             HighpassFilter(30), voice_pocket(-2.0, 3500),
             Compressor(threshold_db=-20, ratio=2.5, attack_ms=20, release_ms=150),
             Reverb(room_size=0.35, damping=0.7, wet_level=0.12, dry_level=0.95, width=0.7),
+        ])
+    if family:
+        return Pedalboard([
+            HighpassFilter(40 if family in ('strings', 'timpani', 'brass') else 100),
+            voice_pocket(-2),
+            Reverb(room_size=0.6, damping=0.5, wet_level=0.08 if part == 'guitar' else 0.2,
+                   dry_level=0.9, width=0.8),
         ])
     return Pedalboard([Gain(0.0)])
 

@@ -13,6 +13,8 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     from src.analyze.__main__ import build_parser
     build_parser(sub.add_parser("analyze", help="代码结构 / git diff → MIDI → 混音"))
+    from src.story.pipeline import build_parser as story_parser
+    story_parser(sub.add_parser("story", help="故事 JSON → 叙事配乐 / MIDI / 同步视频"))
     sub.add_parser("score", help="1. 作曲 → midi/*.mid")
     r = sub.add_parser("render", help="2. MIDI → build/stems/*.wav")
     r.add_argument("--fallback", action="store_true")
@@ -27,6 +29,26 @@ def main(argv=None):
         serve(argv[1:])
         return
     a = ap.parse_args(argv)
+
+    if a.cmd == 'story':
+        import json
+        import subprocess
+        from src.story.pipeline import run
+        from src.types import StorySpec
+        if a.schema:
+            schema = {'$schema': 'https://json-schema.org/draft/2020-12/schema',
+                      '$comment': 'Generated from src/types/story.py; regenerate with musician story --schema.',
+                      **StorySpec.model_json_schema()}
+            print(json.dumps(schema, ensure_ascii=False, indent=2))
+            return
+        if not a.spec:
+            ap.error('story requires a JSON spec or --schema')
+        try:
+            return run(a.spec, a.out, fallback=a.fallback, strict=a.strict, midi_only=a.midi_only,
+                       video=a.video, soundfont=a.soundfont, voice=a.voice, font=a.font,
+                       midi=a.midi, sheet_preview=a.sheet_preview)
+        except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as error:
+            ap.exit(1, f'[story] {error}\n')
 
     if a.cmd == "analyze":
         from src.analyze.pipeline import run
